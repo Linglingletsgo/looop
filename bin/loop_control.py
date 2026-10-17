@@ -78,7 +78,9 @@ def finish_without_attempt(root,lane,reason):
  def apply(doc):
   current=doc.get('loop_control',{})
   if current.get('run_id')!=value.get('run_id') or current.get('mode')!='once' or current.get('attempt'):return None
-  current.update(mode='paused',status='finished',reason=reason);return current
+  current.update(mode='paused',status='finished',reason=reason)
+  doc['selection']={'phase':'no_work','detail':reason}
+  return current
  return store.mutate(lane,'loop-finish-'+value['run_id'],{'type':'loop_finished','reason':reason},apply)
 
 

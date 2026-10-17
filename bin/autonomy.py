@@ -143,7 +143,7 @@ def tick(lane):
   for f in (ROOT/'data/autonomy'/lane).glob('*/state.json'):
    previous=json.loads(f.read_text())
    if previous.get('interrupted_planning'):continue
-   if previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id and (not current_goal or previous.get('goal_id')==current_goal['id'] and previous.get('goal_completed_slices')==current_goal.get('completed_slices',0)):
+   if previous.get('state') in ('queued','no_work','rejected') and previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id and (not current_goal or previous.get('goal_id')==current_goal['id'] and previous.get('goal_completed_slices')==current_goal.get('completed_slices',0)):
     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});finish_without_attempt(ROOT,lane,'该版本与需求状态已完成选题；不重复调用模型。');return
    if previous.get('fingerprint'):history.append(previous['fingerprint'])
   policy=json.loads((ROOT/'data/delivery-policies'/(lane+'.json')).read_text())

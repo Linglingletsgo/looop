@@ -48,7 +48,9 @@ class LoopControls(unittest.TestCase):
   self.store.external_work('demo',{'action':'start','id':'manual','summary':'Editing'},0,'external','session')
   with self.assertRaises(Held):self.switch('continuous')
  def test_same_baseline_one_shot_can_finish_without_model(self):
+  self.store.selection('demo','waiting','Stale waiting reason')
   self.switch('once');loop.finish_without_attempt(self.root,'demo','Baseline already planned');self.assertEqual(loop.view(self.root,'demo')['mode'],'paused')
+  doc=self.store.read('demo');self.assertNotEqual(doc['phase'],'waiting');self.assertEqual(doc['selection'],{'phase':'no_work','detail':'Baseline already planned'})
  def test_new_requirement_is_shared_idempotent_and_does_not_resume(self):
   payload={'action':'intent','lane':'demo','revision':0,'request_id':'intent-request','title':'Improve flow','body':'Meaningful observable result','priority':'high'}
   result=actions.execute(payload,self.root);again=actions.execute(payload,self.root)
@@ -123,3 +125,28 @@ class SingleRunIntegration(unittest.TestCase):
   with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
    autonomy.tick('test');autonomy.tick('test');self.assertEqual(run.call_count,1)
   self.assertEqual(loop.view(self.root,'test')['mode'],'paused')
+
+ def test_cancelled_planning_failure_does_not_poison_same_baseline_restart(self):
+  self.mandate['enabled']=False;self.setup_tick();store=Store(self.root);store.ensure('test');(self.root/'data/project-state/enabled').touch()
+  prior=self.root/'data/autonomy/test/old/state.json';prior.parent.mkdir(parents=True)
+  prior.write_text(json.dumps({'state':'cancelled','baseline_sha':self.sha,'planning_revision':0,'selected_intent':None,'error':'Research plan schema failed','resolution':{'previous_state':'blocked'}}))
+  with patch('bridge.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'restart')
+  class Board:
+   def api(self,method,path,data=None):
+    if path=='/auth/get-session':return {'user':{'id':'owner'}}
+    if method=='POST':return {'id':'pm','identifier':'T-1'}
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No ready work after verified research"}') as model:
+   autonomy.tick('test');loop.settle(self.root,'test');autonomy.tick('test')
+   self.assertEqual(model.call_count,1)
+  self.assertEqual(len(list(prior.parent.parent.glob('*/state.json'))),2)
+  self.assertEqual(json.loads(prior.read_text())['state'],'cancelled')
+  self.assertEqual(store.read('test')['selection']['phase'],'no_work')
+ def test_completed_no_work_memo_updates_display_without_another_model_call(self):
+  self.mandate['enabled']=False;self.setup_tick();store=Store(self.root);store.ensure('test');(self.root/'data/project-state/enabled').touch()
+  prior=self.root/'data/autonomy/test/old/state.json';prior.parent.mkdir(parents=True)
+  prior.write_text(json.dumps({'state':'no_work','baseline_sha':self.sha,'planning_revision':0,'selected_intent':None}))
+  store.selection('test','waiting','Stale resume message')
+  with patch('bridge.validate_profile',return_value={}):loop.switch(self.root,'test','once',store.read('test')['revision'],'restart')
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
+   autonomy.tick('test');model.assert_not_called()
+  self.assertEqual(loop.view(self.root,'test')['mode'],'paused');self.assertEqual(store.read('test')['selection']['phase'],'no_work');self.assertNotEqual(store.read('test')['phase'],'waiting')
