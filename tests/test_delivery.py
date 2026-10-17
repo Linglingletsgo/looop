@@ -119,7 +119,7 @@ class Delivery(unittest.TestCase):
  def test_unlimited_runtime_and_explicit_commands_in_prompts(self):
   seen=[]
   def model(workspace,scratch,prompt,**kwargs):
-   self.assertIsNone(kwargs['timeout']);self.assertIn('npm/npx are not exposed',prompt);self.assertIn('Controller checks:',prompt);seen.append(kwargs['role'])
+   self.assertIsNone(kwargs['timeout']);self.assertIn('exact configured checks',prompt);self.assertIn('Controller checks:',prompt);seen.append(kwargs['role'])
    return self.harness(workspace,scratch,prompt,**kwargs)
   def check(*a,**kw):self.assertIsNone(kw['timeout']);return subprocess.CompletedProcess([],0,'passed')
   self.assertEqual(self.execute(harness=model,check=check)['state'],'validated');self.assertEqual(len(seen),4)

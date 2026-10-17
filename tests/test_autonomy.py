@@ -8,10 +8,10 @@ class Autonomy(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.root=pathlib.Path(self.tmp.name);self.repo=self.root/'data/execution-repos/test';self.repo.mkdir(parents=True)
   subprocess.run(['git','init','-q',str(self.repo)],check=True)
   for k,v in [('user.name','Test'),('user.email','test@example.test')]:autonomy.git(self.repo,'config',k,v)
-  (self.repo/'spec.py').write_text('Existing behavior returns stable known values.\n');(self.repo/'test.py').write_text('pass\n')
+  (self.repo/'spec.py').write_text('Existing behavior returns stable known values.\n- [ ] Verify stable known values with regression tests.\n');(self.repo/'test.py').write_text('pass\n')
   autonomy.git(self.repo,'add','.');autonomy.git(self.repo,'commit','-qm','baseline');self.sha=autonomy.git(self.repo,'rev-parse','HEAD').decode().strip()
-  self.mandate={'enabled':True,'allowed_paths':['test.py'],'evidence_paths':['spec.py'],'max_files':1,'max_proposals_per_day':2,'pm_role':'product-manager','product_role':'product'}
-  self.value={'action':'task','value':'Regression verifies current deterministic behavior with a meaningful negative control.','evidence':[{'path':'spec.py','quote':'Existing behavior returns stable known values.'}],'packet':{'title':'Add regression','requirements':['Preserve behavior'],'acceptance':['Negative control catches wrong result'],'allowed_paths':['test.py']}}
+  self.mandate={'enabled':True,'allowed_paths':['test.py'],'evidence_paths':['spec.py'],'backlog_paths':['spec.py'],'max_files':1,'max_proposals_per_day':2,'pm_role':'product-manager','product_role':'product'}
+  self.value={'action':'task','backlog_item':{'path':'spec.py','quote':'- [ ] Verify stable known values with regression tests.'},'value':'Regression verifies current deterministic behavior with a meaningful negative control.','evidence':[{'path':'spec.py','quote':'Existing behavior returns stable known values.'}],'packet':{'title':'Add regression','requirements':['Preserve behavior'],'acceptance':['Negative control catches wrong result'],'allowed_paths':['test.py']}}
   self.policy={'enabled':True,'repo':str(self.repo),'github_repo':'test/repo','max_rounds':2,'allowed_paths':['test.py'],'checks':[['python3','test.py']],'workflow':[{'stage':'plan','role':'product'},{'stage':'build','role':'builder'},{'stage':'review','role':'reviewer'},{'stage':'acceptance','role':'product'}],'role_registry':fingerprints(resolve(self.repo))}
  def tearDown(self):self.tmp.cleanup()
  def setup_tick(self):

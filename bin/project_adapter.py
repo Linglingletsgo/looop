@@ -73,6 +73,7 @@ def check_policy(policy):
  config=policy.get('project_adapter')
  if not config:return
  validate(config)
+ if config.get('allowed_paths') and policy.get('scope_mode')=='task_paths':raise ValueError('Explicit project file restrictions cannot be expanded by runtime defaults')
  if config.get('execution_enabled') is False:raise ValueError('Project adapter is context-only; execution is disabled')
  for key in ('workflow','checks','allowed_paths'):
   if key in config and config[key]!=policy.get(key):raise ValueError('Project adapter / execution policy mismatch: '+key)

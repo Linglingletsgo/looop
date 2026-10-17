@@ -1,0 +1,7 @@
+{
+  "max_rounds": 3,
+  "workflow": [
+    {"stage": "build", "role": "builder", "provider": "commandcode"},
+    {"stage": "review", "role": "reviewer", "mode": "standard", "provider": "codex"}
+  ]
+}

@@ -10,8 +10,12 @@ def config():return json.loads((ROOT/'data/control.json').read_text())
 def project(s,lane):
  if lane not in s['projects']:raise ValueError('Unknown executable project lane (DS1 is excluded)')
  return s['projects'][lane]
-def configure(lane,path):
- s=config();p=project(s,lane);policy=json.loads(pathlib.Path(path).read_text());repo=pathlib.Path(p['repo']).resolve()
+def configure(lane,path=None):
+ from execution_config import inherited_policy,inherited_mandate
+ s=config();p=project(s,lane);repo=pathlib.Path(p['repo']).resolve()
+ if not path and (ROOT/'data/delivery-policies'/(lane+'.json')).exists():
+  print('Existing project execution configuration retained:',lane);return
+ policy=json.loads(pathlib.Path(path).read_text()) if path else inherited_policy(repo)
  if pathlib.Path(policy['repo']).resolve()!=repo:raise ValueError('Policy repository differs from lane')
  validate_profile(p['profile'])
  registry=resolve(repo,policy.get('project_adapter'))
@@ -26,6 +30,9 @@ def configure(lane,path):
  for step in policy.get('workflow',[]):
   if step.get('role') not in registry['roles']:raise ValueError('Undefined role '+str(step.get('role')))
  if registry['workflow'] is not None and registry['workflow']!=policy['workflow']:raise ValueError('Map project workflow before enabling')
+ if not path:
+  from delivery import validate
+  validate({'title':'Configuration check','requirements':['Configuration only'],'acceptance':['No task execution'],'allowed_paths':policy.get('allowed_paths') or ['configuration-check.txt'],'baseline_sha':__import__('repository').git(repo,'rev-parse','HEAD').decode().strip()},policy)
  b=Board();company=p.get('company',s.get('company'));key=lane+':delivery'
  if key not in s['agents']:
   a=b.api('POST',f'/companies/{company}/agents',{'name':lane+' / packet delivery','role':'engineer','adapterType':'process','adapterConfig':{'command':'/usr/bin/python3','args':[str(ROOT/'bin/delivery-worker.py'),lane],'cwd':str(ROOT),'timeoutSec':0},'runtimeConfig':{'heartbeat':{'enabled':True,'intervalSec':60,'wakeOnDemand':True,'maxConcurrentRuns':1}},'permissions':{'canCreateAgents':False,'canCreateSkills':False}})
@@ -39,6 +46,10 @@ def configure(lane,path):
  folder=ROOT/'data/delivery-policies';folder.mkdir(exist_ok=True,mode=0o700)
  (folder/(lane+'.json')).write_text(json.dumps(policy,indent=2))
  (ROOT/'data/control.json').write_text(json.dumps(s,indent=2))
+ if not path:
+  from lifecycle import save
+  target=ROOT/'data/autonomy-policies'/(lane+'.json')
+  if not target.exists():save(target,inherited_mandate(policy))
  print('Packet execution configured:',lane)
 
 def sync_prs():
@@ -149,7 +160,7 @@ if __name__=='__main__':
  sp.add_parser('sync-prs')
  a=sp.add_parser('retry');a.add_argument('issue');a.add_argument('--reason',required=True)
  a=sp.add_parser('roles');a.add_argument('repo')
- a=sp.add_parser('configure');a.add_argument('lane');a.add_argument('--policy',required=True)
+ a=sp.add_parser('configure');a.add_argument('lane');a.add_argument('--policy')
  a=sp.add_parser('submit');a.add_argument('lane');a.add_argument('--packet',required=True);a.add_argument('--publish',action='store_true');a.add_argument('--issue')
  args=p.parse_args()
  if args.action=='roles':

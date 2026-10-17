@@ -23,14 +23,14 @@ def validate(packet,policy):
  if not policy.get('checks'):raise GateError('Explicit checks required')
  if any(s.get('provider','codex') not in ('codex','commandcode') for s in policy.get('workflow',[])):raise GateError('Unapproved provider')
  for argv in policy['checks']:
-  if not isinstance(argv,list) or not argv or argv[0] not in ('python3','node'):raise GateError('Unsupported check executable')
+  if not isinstance(argv,list) or not argv or argv[0] not in ('python3','node','npm'):raise GateError('Unsupported check executable')
  if not 1<=len(packet['allowed_paths'])<=20:raise GateError('Invalid write scope')
  for name in packet['allowed_paths']:
   p=pathlib.PurePosixPath(name)
   if p.is_absolute() or not name or any(x in ('.','..','.git','node_modules','.paperclip','.agents','.codex','.agent') for x in p.parts):raise GateError('Invalid scope '+name)
   if any(x.startswith('.env') for x in p.parts) or p.suffix in ('.key','.pem','.db','.sqlite'):raise GateError('Secret/data scope forbidden')
   if p.name.lower() in ('agents.md','agent.md','handoff.md') or name.startswith('docs/project/agent-roles/'):raise GateError('Rules/handoff not writable')
-  if name not in policy['allowed_paths']:raise GateError('Path outside project execution policy: '+name)
+  if policy.get('scope_mode')!='task_paths' and name not in policy['allowed_paths']:raise GateError('Path outside project execution policy: '+name)
  steps=policy.get('workflow',[])
  if not steps or any(s.get('stage') not in STAGES or not s.get('role') for s in steps):raise GateError('Explicit workflow required')
  modes=[s.get('mode','standard') for s in steps if s['stage']=='review']
@@ -104,7 +104,7 @@ def execute(packet,policy,job,emit=print,publish=True):
    (root/'roles.json').write_text(json.dumps(fingerprints(registry),ensure_ascii=False,indent=2))
    rules='\n'.join('PROJECT RULES '+n+'\n'+(baseline/n).read_text() for n in dict.fromkeys(['AGENTS.md','AGENT.md','Agent.md','agents.md','docs/project/single-developer-workflow.md','docs/project/agent-os-convergence-policy.md',*policy.get('workflow_evidence',{})]) if (baseline/n).is_file())
    dependencies=pathlib.Path(policy['dependencies']) if policy.get('dependencies') else None
-   context='Execution environment: Node and python3 are available when dependencies are mounted; npm/npx are not exposed. Use the exact controller check argv below, not npm/npx or installation. For Vitest focused runs insert the target test path into the configured command; keep --configLoader=runner and --no-cache. Do not add shell timeout wrappers. Read targeted source ranges before implementing; avoid repeatedly exploring the same files. Controller checks: '+json.dumps(policy['checks'])+'\n'
+   context='Use the existing project environment and exact configured checks; do not install dependencies. Node/npm are available when dependencies are mounted. Read targeted source ranges before implementing. Controller checks: '+json.dumps(policy['checks'])+'\n'
    context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(packet,ensure_ascii=False)+'\nSource /workspace is a controller-verified baseline snapshot. No host credentials/network. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
    plans=[]
    for step in policy['workflow']:

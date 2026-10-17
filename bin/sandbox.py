@@ -90,6 +90,9 @@ experimental_bearer_token = "sandbox-placeholder"
   idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str(pathlib.Path(dependencies).resolve()),'/workspace/node_modules']
   node=(pathlib.Path.home()/'.local/bin/node').resolve()
   cmd[idx:idx]=['--ro-bind',str(node),'/tools/node']
+ if dependencies:
+  from package_tools import mount_npm
+  mount_npm(cmd,agent=True)
  if dependencies and (pathlib.Path(dependencies).parent/'web/node_modules').is_dir():
   (pathlib.Path(workspace)/'web/node_modules').mkdir(parents=True,exist_ok=True)
   idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str((pathlib.Path(dependencies).parent/'web/node_modules').resolve()),'/workspace/web/node_modules']

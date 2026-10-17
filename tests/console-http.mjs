@@ -27,5 +27,7 @@ try{
  assert.equal((await post({...command,request_id:'stale'})).status,409);
  assert.equal((await post({action:'loop',lane:'fixture',mode:'continuous',revision:1,request_id:'forbidden'})).status,422);
  response=await post({action:'loop',lane:'fixture',mode:'paused',revision:1,request_id:'pause'});assert.equal(response.status,200);
+ response=await post({action:'settings',lane:'fixture',revision:2,request_id:'selection-settings',selection_mode:'backlog_and_research',daily_limit:null});assert.equal(response.status,200);assert.equal((await response.json()).result.revision,3);
+ assert.equal((await post({action:'settings',lane:'fixture',revision:3,request_id:'bad-selection',selection_mode:'anything',daily_limit:null})).status,422);
  console.log('Disposable HTTP integration passed: owner auth, CSRF, real intent persistence/idempotency, revision conflict, no authority expansion, pause.');
 }finally{if(server)await new Promise(resolve=>server.close(resolve));await rm(fixture,{recursive:true,force:true});}
