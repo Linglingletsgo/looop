@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "name": "WOS mainline",
+  "execution_enabled": false,
+  "role_discovery": "explicit",
+  "roles": {
+    "acceptance": [
+      "docs/project/agent-roles/acceptance.md"
+    ],
+    "adversarial-auditor": [
+      "docs/project/agent-roles/adversarial-auditor.md"
+    ],
+    "builder": [
+      "docs/project/agent-roles/builder.md"
+    ],
+    "product": [
+      "docs/project/agent-roles/product.md"
+    ],
+    "product-evaluator": [
+      "docs/project/agent-roles/product-evaluator.md"
+    ],
+    "product-manager": [
+      "docs/project/agent-roles/product-manager.md"
+    ],
+    "reviewer": [
+      "docs/project/agent-roles/reviewer.md"
+    ]
+  },
+  "rules": {
+    "common": [],
+    "by_role": {
+      "product": [
+        "docs/project/single-developer-workflow.md",
+        "docs/project/agent-os-convergence-policy.md"
+      ]
+    },
+    "reference": [
+      "docs/project/handoff-product-2026-09-21.md"
+    ]
+  },
+  "workflow_mapping": "Context-only adapter. Keep the existing WOS Product-coordinated workflow, full role contracts, frozen product/implementation/candidate SHAs and black-box acceptance. No automatic development or merging is enabled. DS1 is a separate human UI worktree and is not an executable project."
+}

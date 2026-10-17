@@ -1,0 +1,7 @@
+{
+  "title": "Replace with one bounded task",
+  "baseline_sha": "REPLACE_WITH_VERIFIED_40_CHARACTER_GIT_SHA",
+  "allowed_paths": ["src/example.py"],
+  "requirements": ["Replace with an explicit behavior and its boundaries"],
+  "acceptance": ["Replace with observable synthetic acceptance criteria"]
+}

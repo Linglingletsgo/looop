@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+kit_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$HOME/.local/bin:$PATH"
+export PAPERCLIP_HOME="$kit_root/data"
+export PAPERCLIP_INSTANCE_ID=default
+export PAPERCLIP_NO_BROWSER=1
+export npm_config_cache="$kit_root/cache/npm"
+umask 077
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  echo 'DATABASE_URL is set. Use a clean Paperclip shell without the business database URL.' >&2
+  exit 1
+fi
+cli="$kit_root/.runtime/node_modules/.bin/paperclipai"
+if [[ ! -x "$cli" ]]; then
+  echo 'Paperclip is not installed. Follow README step 2.' >&2
+  exit 1
+fi
+exec "$cli" "$@"

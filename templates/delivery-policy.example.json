@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "repo": "/home/agentdev/projects/my-project",
+  "github_repo": "OWNER/REPOSITORY",
+  "base_branch": "main",
+  "risk": "low",
+  "max_rounds": 3,
+  "allowed_paths": [
+    "src/example.py"
+  ],
+  "checks": [
+    [
+      "python3",
+      "-m",
+      "unittest",
+      "-v"
+    ]
+  ],
+  "workflow": [
+    {
+      "stage": "build",
+      "role": "builder",
+      "provider": "commandcode"
+    },
+    {
+      "stage": "review",
+      "role": "reviewer",
+      "mode": "standard",
+      "provider": "codex"
+    }
+  ]
+}

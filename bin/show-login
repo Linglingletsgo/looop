@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 - "$root" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1])/'data/owner-login.json'
+d=json.loads(p.read_text())
+print('URL: http://100.64.114.55:3101')
+print('Email:',d['email'])
+print('Password:',d['password'])
+print('Only enter this password in your private Paperclip instance.')
+PY

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "Goal to People",
+  "role_discovery": "explicit",
+  "roles": {},
+  "rules": {
+    "common": [
+      "docs/backlog.md"
+    ],
+    "reference": [
+      "HANDOFF.md"
+    ]
+  },
+  "workflow": [
+    {
+      "stage": "build",
+      "role": "builder",
+      "provider": "commandcode"
+    },
+    {
+      "stage": "review",
+      "role": "reviewer",
+      "mode": "standard",
+      "provider": "codex"
+    }
+  ],
+  "checks": [
+    [
+      "node",
+      "node_modules/vitest/vitest.mjs",
+      "run",
+      "--maxWorkers=4",
+      "--configLoader=runner",
+      "--no-cache"
+    ],
+    [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "--noEmit"
+    ]
+  ],
+  "allowed_paths": [
+    "src/fetch/extract.test.ts",
+    "src/results/build.test.ts"
+  ],
+  "workflow_mapping": "User-approved 2026-10-17 workflow: PM defines scoped requirements and completion criteria; Builder implements; controller runs configured checks; independent Reviewer evaluates requirements, implementation and evidence. No separate Acceptance agent is configured. External Product remains the human conversation interface. Historical HANDOFF/backlog provide context and project rules; the user explicitly overrides the separate PO/final-acceptance role for this scheduler test. No production/data/service or deployment authority added."
+}

@@ -1,0 +1,46 @@
+{
+  "_note": "Proposed custom bridge configuration; not native Paperclip config. No bridge is shipped in this kit.",
+  "schema_version": 1,
+  "project_id": "replace-me",
+  "tier": "lite",
+  "activation": "observe_only",
+  "repository": {
+    "root": "/home/agentdev/projects/replace-me",
+    "default_branch": "main",
+    "shared_lock_id": "canonical-repository-identity",
+    "agent_system_sha": "REPLACE_WITH_FULL_COMMIT_SHA"
+  },
+  "roles": {},
+  "workflow": {
+    "contract": null,
+    "max_building_per_repository": 1,
+    "review_mode": "standard",
+    "review_hard_cap": 6,
+    "on_revision_change": "invalidate_reviews_and_acceptance",
+    "on_merge_ready": "wait_for_human"
+  },
+  "authority": {
+    "create_commits": false,
+    "push_task_branches": false,
+    "create_pull_requests": false,
+    "merge": false,
+    "deploy": false,
+    "production": false
+  },
+  "lanes": [
+    { "id": "mainline", "context_namespace": "replace-me/mainline" }
+  ],
+  "quota": {
+    "allowed_routes": [],
+    "allow_paid_fallback": false,
+    "exhausted": "pause_until_reset",
+    "unknown": "pause_for_policy_decision"
+  },
+  "runtime": {
+    "provider": "UNCONFIGURED",
+    "mount_host_home": false,
+    "mount_host_docker_socket": false,
+    "reviewed_source_read_only": true,
+    "acceptance_source_mount": false
+  }
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync approved PR merges, verify mainline, reconcile and report
+After=paperclip-board.service
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+TimeoutStartSec=infinity
+ExecStart=/usr/bin/flock -n @ROOT@/data/locks/maintenance /usr/bin/python3 @ROOT@/bin/maintenance.py

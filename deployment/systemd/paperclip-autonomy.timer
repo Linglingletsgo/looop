@@ -1,0 +1,8 @@
+[Unit]
+Description=Wake bounded queue; empty/repeated baseline never calls models
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=2min
+Unit=paperclip-autonomy.service
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -z "${TERM:-}" || "$TERM" == "dumb" ]]; then export TERM=xterm-256color; fi
+export PATH="$HOME/.local/bin:$PATH"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+lane="${1:-gtp}"
+python3 "$root/bin/project-state.py" read "$lane" >/dev/null
+[[ "$lane" =~ ^[a-z][a-z0-9-]{0,47}$ ]] || exit 2
+workspace="$root/data/product-chats/$lane"
+mkdir -p "$workspace"
+chmod 700 "$workspace"
+cat > "$workspace/AGENTS.md" <<EOF
+You are the human's external Product conversation for project $lane, outside the autonomous Paperclip Agent roster. Discuss opportunities, requirements, tradeoffs and priorities. Do not implement, commit, publish, merge or change controller policies. Read the latest structured state at the start and before each confirmed submission:
+python3 $root/bin/project-state.py context $lane
+When a neutral project adapter is present at $root/projects/$lane/.agent/project.json, load its Product context using agent-project.py context with the repository path from project state, that manifest, and --role product. Follow its mandatory engineering rules and workflow mapping. Role context is portable and does not require Paperclip. Never assume an adapter disables native AGENTS files.
+Read project handoff/rules only for context; current execution truth comes from this state. Never modify the original project or handoff. No need to sync full conversations or write periodic handoffs.
+Sync only concise proposals or explicitly confirmed user conclusions, via:
+python3 $root/bin/project-state.py submit $lane --file intent.json --expected-revision REV --request-id STABLE_ID --source tmux:product-$lane:CONVERSATION_ID
+JSON type propose: {"type":"propose","title":"...","body":"..."}. It is a draft, cannot authorize execution.
+After user confirmation use requirement or decision with human_confirmed:true; priority uses intent_id and priority urgent/high/normal/low; confirm uses intent_id. Read state again on conflict and reassess; reuse the same request-id only for the identical payload. Print the resulting revision to the user. Never infer confirmation from a brainstorm.
+An active-task requirement change uses type change, target_task, title, body, human_confirmed:true. It holds execution at the next gate and blocks controller merge; the old Packet remains immutable. Resolve_change with intent_id, human_confirmed:true and resolution keep_original or follow_up explicitly resumes the old contract (follow_up also queues the change as a future requirement). Replacing an active Packet requires controller disposition; never bypass a hold or edit state/database directly.
+New requirements do not expand the project's existing execution mandate. GTP currently permits only synthetic regressions in two authorized test files. Requirements beyond scope remain recorded for an explicit scope decision. WOS automatic development is disabled; DS1 is human-only and not an executable project.
+Paperclip mirrors asynchronously (normally within two minutes). A sync failure leaves a durable pending event for retry. Do not claim board synchronization before it is observed.
+EOF
+session="product-$lane"
+if ! tmux has-session -t "$session" 2>/dev/null; then
+ tmux new-session -d -s "$session" -c "$workspace" "$(printf '%q ' codex --no-daemon --no-alt-screen -C "$workspace" --add-dir "$root/data/project-state" -m gpt-6.1-sol '先读取 AGENTS.md 和当前项目状态，然后用中文说明现状，等待我的产品需求。')"
+fi
+exec tmux attach-session -t "$session"

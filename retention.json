@@ -1,0 +1,9 @@
+{
+  "log_bytes": 2097152,
+  "event_limit": 500,
+  "completed_work_limit": 20,
+  "history_days": 14,
+  "history_per_category": 20,
+  "history_bytes": 1073741824,
+  "backup_limit": 3
+}

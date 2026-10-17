@@ -1,0 +1,23 @@
+{
+  "_note": "Custom evidence contract example; placeholder values are not valid approvals.",
+  "schema_version": 1,
+  "run_id": "RUN-ID",
+  "packet_id": "PACKET-ID",
+  "project_id": "PROJECT-ID",
+  "lane_id": "mainline",
+  "role": "builder",
+  "mode": null,
+  "status": "BLOCKED",
+  "agent_system_sha": "FULL-SHA",
+  "product_baseline_sha": "FULL-SHA",
+  "target_sha": "FULL-SHA",
+  "harness": "codex",
+  "provider_route": "existing-subscription-route",
+  "artifacts": [],
+  "verification": [],
+  "findings": [],
+  "cleanup": { "owned_resources_remaining": 0, "evidence": null },
+  "blocker": "Example only; runtime not configured",
+  "proposed_next_action": "wait",
+  "completed_at": null
+}
