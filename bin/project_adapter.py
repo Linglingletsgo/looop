@@ -1,5 +1,5 @@
 """Project-owned execution contract. No Paperclip client or scheduler dependencies."""
-import hashlib,json,pathlib
+import hashlib,json,pathlib,re
 NATIVE=('AGENTS.md','AGENT.md','Agent.md','agents.md')
 
 def safe_file(root,name):
@@ -60,13 +60,24 @@ def native_files(root,targets):
    if p.is_file() or p.is_symlink():safe_file(root,relative);names.append(relative)
  return names
 
+def rule_context(root,name):
+ content=safe_file(root,name).read_text()
+ if pathlib.PurePosixPath(name).name in NATIVE or len(content)<=16000:return 'MANDATORY PROJECT RULE '+name+'\n'+content
+ # Keep large mixed rules/history files intact on disk, with a bounded navigation index.
+ headings=[(i,line[:240]) for i,line in enumerate(content.splitlines(),1) if re.match(r'^#{1,3} ',line)]
+ index=headings if len(headings)<=60 else headings[:30]+headings[-30:]
+ return ('MANDATORY PROJECT RULE FILE '+name+' ('+str(len(content))+' characters; full file available in workspace).\n'
+  'Read applicable project constraints from this file before concluding. This index is navigation, not a replacement for its rules. '
+  'Use targeted reads and searches; historical completed tasks are not fresh work or execution authority. Do not load the whole historical log by default.\n'
+  +'\n'.join(str(i)+': '+line for i,line in index))
+
 def context(root,config,role,targets=()):
  names=native_files(root,targets)
  if config:
   names+=config.get('rules',{}).get('common',[])
   from roles import canonical
   names+=config.get('rules',{}).get('by_role',{}).get(canonical(role),[])
- result='\n'.join('MANDATORY PROJECT RULE '+n+'\n'+safe_file(root,n).read_text() for n in dict.fromkeys(names))
+ result='\n'.join(rule_context(root,n) for n in dict.fromkeys(names))
  if config and config.get('workflow_mapping'):
   result+='\nUSER-APPROVED WORKFLOW RESPONSIBILITY MAPPING:\n'+config['workflow_mapping']
  return result

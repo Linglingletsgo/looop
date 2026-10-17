@@ -47,6 +47,30 @@ class DefaultMethods(unittest.TestCase):
   value=research.perform(run,self.repo,self.repo/'run','PM','Backlog only',lambda:None,{'harness':'codex','provider':'codex'})
   self.assertEqual(len(value['loaded_skills']),2);self.assertIn('Source count is not a proof threshold',prompts[1]);self.assertNotIn('Content not loaded',prompts[1]);self.assertNotIn('content',value['loaded_skills'][0])
 
+ def test_wrong_phase_packet_is_corrected_before_any_research(self):
+  calls=[]
+  responses=[{'status':'proposal','packet':{'title':'Wrong phase'}},{'question':'Is export evidence sufficient?','stop_condition':'Read specification and stop','skills':['looop:investigation']},{'status':'insufficient_evidence','question':'Is export evidence sufficient?','finding':'No specification exists','counterevidence':'No factual basis','recommendation':'Wait for evidence','skill_usage':[{'path':'looop:investigation','impact':'Identified missing evidence instead of guessing'}]}]
+  def run(*args,**kwargs):calls.append(args);return json.dumps(responses.pop(0))
+  value=research.perform(run,self.repo,self.repo/'run','PM proposes tasks','Current state',lambda:None,{'harness':'codex','provider':'codex'})
+  self.assertEqual(value['status'],'insufficient_evidence');self.assertEqual(len(calls),3)
+  self.assertIn('OUTPUT CORRECTION',calls[1][2]);self.assertIn('research-plan-retry-1',str(calls[1][1]));self.assertEqual(calls[2][1].name,'research')
+  self.assertNotIn('packet',value)
+
+ def test_citation_path_format_is_corrected_but_quote_evidence_is_not_retried(self):
+  quote='Confirmed export must contain the record date.'
+  (self.repo/'spec.md').write_text(quote)
+  plan={'question':'Does export preserve dates?','stop_condition':'Check spec','skills':['looop:investigation']}
+  report={'status':'supported','question':plan['question'],'finding':'A date is required','counterevidence':'No user study','recommendation':'Continue scoped requirement','skill_usage':[{'path':'looop:investigation','impact':'Compared implementation to specification'}],'sources':[{'kind':'repository','path':'spec.md:1','quote':quote}]}
+  repaired=copy.deepcopy(report);repaired['sources'][0]['path']='spec.md'
+  calls=[];responses=[plan,report,repaired]
+  def run(*a,**k):calls.append(a);return json.dumps(responses.pop(0))
+  value=research.perform(run,self.repo,self.repo/'run','PM','state',lambda:None,{'harness':'codex','provider':'codex'})
+  self.assertEqual(value['sources'][0]['path'],'spec.md');self.assertEqual(len(calls),3);self.assertIn('without line-number suffixes',calls[2][2])
+  repaired['sources'][0]['quote']='An invented quotation that is absent from the actual specification.'
+  with patch.object(research,'invoke',side_effect=[plan,repaired]) as model:
+   with self.assertRaisesRegex(ValueError,'quotation not found'):research.perform(run,self.repo,self.repo/'bad','PM','state',lambda:None,{'harness':'codex','provider':'codex'})
+  self.assertEqual(model.call_count,2)
+
 class GoalPlanning(unittest.TestCase):
  setUp=fixtures.Autonomy.setUp
  tearDown=fixtures.Autonomy.tearDown

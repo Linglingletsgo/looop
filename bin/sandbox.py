@@ -108,9 +108,13 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
  from repository import source_fingerprint
  before=source_fingerprint(workspace) if role!='builder' else None
  cmd,env,model=invocation(pathlib.Path(workspace).resolve(),scratch,route)
+ # Archive snapshots have no .git: never discover the controller repository above them.
+ for key in ('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES'):
+  env.pop(key,None)
+ env['GIT_CEILING_DIRECTORIES']=str(pathlib.Path(workspace).resolve().parent)
  if app_socket:raise RuntimeError('Source-free acceptance transport requires a project execution adapter')
  readonly='This role is read-only. Do not modify project files. ' if role!='builder' else ''
- prompt=readonly+'Execute in the current project directory using this harness and installed project tools. Do not access scheduler credentials or other projects. No model/provider switching or paid external tools.\n'+prompt
+ prompt=('Archive snapshots may have no Git metadata. Use the controller-provided baseline; unavailable Git information is not a baseline mismatch.\n' if not (pathlib.Path(workspace)/'.git').exists() and not git_metadata else '')+readonly+'Execute in the current project directory using this harness and installed project tools. Do not access scheduler credentials or other projects. No model/provider switching or paid external tools.\n'+prompt
  (scratch/'prompt.txt').write_text(prompt)
  logpath=scratch/'events.jsonl';tail=bytearray();thread_error=[]
  with workspace_environment(workspace,dependencies,git_metadata):

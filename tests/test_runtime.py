@@ -77,3 +77,17 @@ class Runtime(unittest.TestCase):
      _,env,_=sandbox.invocation(root,root,{'harness':'claude','provider':'claude_subscription'})
      self.assertEqual(env['CHROMIUM_PATH'],str(browser))
    with patch.object(sandbox,'ROOT',root),patch.dict(os.environ,{'CHROMIUM_PATH':'/project/browser'}):self.assertEqual(sandbox.execution_environment()['CHROMIUM_PATH'],'/project/browser')
+
+ def test_nested_archive_cannot_discover_controller_git(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);subprocess.run(['git','init','-q',str(root)],check=True)
+   subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','--allow-empty','-qm','controller'],cwd=root,check=True)
+   work=root/'data/workspace';work.mkdir(parents=True)
+   code="import sys,subprocess,json;sys.stdin.read();p=subprocess.run(['git','rev-parse','HEAD'],capture_output=True,text=True);print(json.dumps({'type':'result','result':json.dumps({'exit':p.returncode,'head':p.stdout.strip()})}))"
+   def invoke(*args):return ['python3','-c',code],{**os.environ,'GIT_DIR':str(root/'.git')},'fixture'
+   with patch.object(sandbox,'ROOT',root),patch.object(sandbox,'invocation',side_effect=invoke):
+    missing=json.loads(sandbox.run(work,root/'missing','fixture',execution_route={'harness':'claude','provider':'claude_subscription'}))
+    own=json.loads(sandbox.run(work,root/'own','fixture',git_metadata=root/'.git',execution_route={'harness':'claude','provider':'claude_subscription'}))
+   self.assertNotEqual(missing['exit'],0);self.assertEqual(missing['head'],'')
+   self.assertEqual(own['exit'],0);self.assertEqual(own['head'],subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip())
+   self.assertFalse((work/'.git').exists())

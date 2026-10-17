@@ -85,9 +85,16 @@ def verify(report,repo,public_required=False):
 def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=None,public_required=False):
  available=catalog(repo,adapter)
  # Descriptions only in selection; full reviewed bytes are loaded for the chosen methods.
- plan=invoke(run,repo,folder/'research-plan',role_prompt+'\n'+context+'\nBefore proposing any feature, choose ONE concrete discovery question and a stopping condition. Prefer relevant project PM skills. Default looop: methods fill only gaps: when project skills exist, give fallback_reason naming the missing method. Never replace a required project skill. Select only methods relevant to this decision, not the whole catalog. Explain unavailable/inapplicable skills explicitly. Project authority and data boundaries override skills. Return JSON {"question":"...","stop_condition":"...","skills":["path/SKILL.md"],"skill_reason":"...","fallback_reason":"only if defaults fill a project gap"}.\nCatalog: '+json.dumps([{k:v for k,v in item.items() if k in ('path','description','origin')} for item in available],ensure_ascii=False),fresh,role='readonly',execution_route=execution_route)
- for field in ('question','stop_condition'):
-  if not isinstance(plan.get(field),str) or not plan[field].strip() or len(plan[field])>2000:raise ValueError('Research needs a bounded discovery question and stopping condition')
+ phase='RESEARCH PLAN ONLY. Project role describes the wider workflow; this call selects a discovery question and methods, not a task Packet. '
+ selection='\nBefore proposing any feature, choose ONE concrete discovery question and a stopping condition. Prefer relevant project PM skills. Default looop: methods fill only gaps: when project skills exist, give fallback_reason naming the missing method. Never replace a required project skill. Select only methods relevant to this decision, not the whole catalog. Explain unavailable/inapplicable skills explicitly. Project authority and data boundaries override skills. Return JSON {"question":"...","stop_condition":"...","skills":["path/SKILL.md"],"skill_reason":"...","fallback_reason":"only if defaults fill a project gap"}.\nCatalog: '+json.dumps([{k:v for k,v in item.items() if k in ('path','description','origin')} for item in available],ensure_ascii=False)
+ def validate_plan(plan):
+  if not isinstance(plan,dict):raise ValueError('Research plan must be a JSON object')
+  for field in ('question','stop_condition'):
+   if not isinstance(plan.get(field),str) or not plan[field].strip() or len(plan[field])>2000:raise ValueError('Research needs a bounded discovery question and stopping condition')
+  load_skills(repo,plan,available)
+  for key in ('skill_reason','fallback_reason'):
+   if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
+ plan=invoke(run,repo,folder/'research-plan',phase+selection+'\n'+role_prompt+'\n'+context+'\n'+phase+selection,fresh,validate=validate_plan,role='readonly',execution_route=execution_route)
  skills=load_skills(repo,plan,available)
  plan={k:v for k,v in plan.items() if k in ('question','stop_condition','skills','skill_reason','fallback_reason')}
  for key in ('skill_reason','fallback_reason'):
@@ -96,10 +103,25 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
  prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps(plan,ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
  prompt+='\nConduct the research using real tools and permitted sources. Distinguish facts, inference and unknowns. Do not invent interviews, analytics, experiments or citations. No outreach, private data, payment or production access. '+('This is new requirement discovery: investigate public sources as well as current repository reality. ' if public_required else 'Validate the backlog/confirmed requirement against repository evidence; public research only when needed and permitted. ')
  prompt+='Return only JSON {"status":"supported|insufficient_evidence|rejected","question":"...","finding":"...","counterevidence":"...","recommendation":"...","skill_usage":[{"path":"...","impact":"method actually applied"}],"sources":[{"kind":"repository|public","path":"repo/file","url":"https://...","quote":"exact source quotation"}]}. When unavailable evidence prevents a conclusion, return insufficient_evidence with recommendation; never substitute a guessed requirement.'
- report=invoke(run,repo,folder/'research',prompt,fresh,role='readonly',execution_route=execution_route)
- if not isinstance(report,dict) or not isinstance(report.get('skill_usage'),list):raise ValueError('Research requires a skill usage list')
- for skill in skills:
-  if not any(isinstance(v,dict) and v.get('path')==skill['path'] and isinstance(v.get('impact'),str) and v['impact'].strip() and len(v['impact'])<=2000 for v in report.get('skill_usage',[])):raise ValueError('Research must explain the impact of each loaded skill')
+ def validate_report(report):
+  if not isinstance(report,dict) or report.get('status') not in ('supported','insufficient_evidence','rejected'):raise ValueError('Research requires an explicit evidence conclusion')
+  for field in ('question','finding','counterevidence','recommendation'):
+   if not isinstance(report.get(field),str) or not report[field].strip() or len(report[field])>5000:raise ValueError('Research requires '+field)
+  if not isinstance(report.get('skill_usage'),list):raise ValueError('Research requires a skill usage list')
+  for skill in skills:
+   if not any(isinstance(v,dict) and v.get('path')==skill['path'] and isinstance(v.get('impact'),str) and v['impact'].strip() and len(v['impact'])<=2000 for v in report['skill_usage']):raise ValueError('Research must explain the impact of each loaded skill')
+  if report['status']=='supported':
+   sources=report.get('sources')
+   if not isinstance(sources,list) or not 1<=len(sources)<=8:raise ValueError('Research requires attributable source evidence')
+   for source in sources:
+    if not isinstance(source,dict):raise ValueError('Research source must be an object')
+    if source.get('kind')=='repository':
+     name=source.get('path')
+     if not isinstance(name,str):raise ValueError('Repository source path must be a string without line-number suffixes')
+     try:safe_file(repo,name)
+     except ValueError as exc:raise ValueError('Repository source path must name an existing file, without line-number suffixes: '+name[:240]) from exc
+    elif source.get('kind')!='public':raise ValueError('Unrecognized research source')
+ report=invoke(run,repo,folder/'research',prompt,fresh,validate=validate_report,role='readonly',execution_route=execution_route)
  usage=report['skill_usage']
  report=verify(report,repo,public_required)
  return {**report,'skill_usage':[{'path':s['path'],'impact':next(v['impact'] for v in usage if isinstance(v,dict) and v.get('path')==s['path'])} for s in skills],'plan':plan,'loaded_skills':[{k:v for k,v in s.items() if k!='content'} for s in skills]}

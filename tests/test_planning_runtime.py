@@ -25,6 +25,21 @@ class PlanningRecovery(unittest.TestCase):
    run=Mock(side_effect=RuntimeError(message))
    with self.assertRaises(RuntimeError):invoke(run,self.root,self.scratch,'prompt',Mock())
    self.assertEqual(run.call_count,1)
+ def test_schema_correction_is_bounded_and_keeps_separate_receipts(self):
+  def validate(value):
+   if not isinstance(value,dict) or not value.get('question'):raise ValueError('question required')
+  run=Mock(side_effect=['{"packet":{}}','{"question":"Verify export?"}'])
+  value=invoke(run,self.root,self.scratch,'schema',Mock(),validate=validate)
+  self.assertEqual(value['question'],'Verify export?')
+  self.assertIn('OUTPUT CORRECTION',run.call_args.args[2]);self.assertNotEqual(run.call_args_list[0].args[1],run.call_args_list[1].args[1])
+  self.assertEqual(json.loads((self.root/'pm-recovery.json').read_text())['state'],'recovered')
+  run=Mock(return_value='[]')
+  with self.assertRaisesRegex(ValueError,'question required'):invoke(run,self.root,self.scratch,'schema',Mock(),validate=validate)
+  self.assertEqual(run.call_count,3);self.assertEqual(json.loads((self.root/'pm-recovery.json').read_text())['category'],'invalid_schema')
+ def test_scope_change_after_result_prevents_correction(self):
+  run=Mock(return_value='{"packet":{}}');fresh=Mock(side_effect=[None,ValueError('Decision changed')]);validate=Mock(side_effect=ValueError('question required'))
+  with self.assertRaisesRegex(ValueError,'Decision changed'):invoke(run,self.root,self.scratch,'schema',fresh,validate=validate)
+  self.assertEqual(run.call_count,1);validate.assert_not_called()
 class ProviderRecovery(unittest.TestCase):
  def setUp(self):self.tmp=tempfile.TemporaryDirectory();self.root=pathlib.Path(self.tmp.name)
  def tearDown(self):self.tmp.cleanup()

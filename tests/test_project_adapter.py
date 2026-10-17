@@ -99,3 +99,11 @@ class Adapter(unittest.TestCase):
    fixture.packet['baseline_sha']=delivery.git(fixture.repo,'rev-parse','HEAD').decode().strip()
    with self.assertRaisesRegex(ValueError,'manifest must be mapped'):fixture.execute()
   finally:fixture.tearDown()
+
+ def test_large_history_is_indexed_but_native_rules_stay_verbatim(self):
+  (self.repo/'history.md').write_text('# Project rules and history\n## Current constraints\nRead before deciding.\n'+'Completed historical entry.\n'*2000+'## Latest evidence\nAvailable on disk.')
+  a=copy.deepcopy(self.adapter);a['rules']['common']=['history.md']
+  c=context(self.repo,a,'builder',['web/app.py'])
+  self.assertLess(len(c),3000);self.assertIn('Current constraints',c);self.assertIn('Latest evidence',c);self.assertIn('Read applicable project constraints',c)
+  (self.repo/'AGENTS.md').write_text('Binding rule.\n'*2000+'Do not bypass this last rule.')
+  c=context(self.repo,a,'builder');self.assertIn('Do not bypass this last rule.',c)

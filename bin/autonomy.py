@@ -175,8 +175,9 @@ def tick(lane):
     if (workspace/'.agent/project.json').exists() and not policy.get('project_adapter'):raise ValueError('Project manifest must be mapped into planning policy')
     if fingerprints(registry)!=policy['role_registry']:raise ValueError('Role baseline differs')
     (folder/'roles.json').write_text(json.dumps(fingerprints(registry),ensure_ascii=False,indent=2))
-    # Carry project workflow/rules verbatim; role definitions remain project-owned.
-    rules='\n'.join('PROJECT FILE '+n+'\n'+(workspace/n).read_text() for n in dict.fromkeys(['AGENTS.md','AGENT.md',*policy.get('workflow_evidence',{})]) if (workspace/n).is_file())
+    # Native rules stay verbatim; large reference/rule documents use navigable indexes.
+    from project_adapter import rule_context
+    rules='\n'.join(rule_context(workspace,n) for n in dict.fromkeys(['AGENTS.md','AGENT.md',*policy.get('workflow_evidence',{})]) if (workspace/n).is_file())
     if policy.get('project_adapter'):
      from project_adapter import context as project_context
      rules=project_context(workspace,policy['project_adapter'],mandate['pm_role'],mandate.get('allowed_paths',[]))
@@ -184,7 +185,7 @@ def tick(lane):
     for f in (ROOT/'data/delivery-bindings').glob('*.json'):
      d=json.loads(f.read_text())
      if d['lane']==lane:recent.append(d['packet'])
-    recent=recent[-20:]
+    recent=[{k:p[k] for k in ('title','requirements','allowed_paths') if k in p} for p in recent[-20:]]
     completed={t.get('evidence',{}).get('backlog_item_key') for t in (store.read(lane)['tasks'].values() if store else [])}
     completed.update({json.loads(f.read_text()).get('backlog_item_key') for f in (ROOT/'data/autonomy'/lane).glob('*/state.json') if json.loads(f.read_text()).get('state')=='queued'})
     sources=backlog_sources(mandate,policy.get('project_adapter'));mandate={**mandate,'backlog_paths':sources}
@@ -193,7 +194,7 @@ def tick(lane):
      receipt.update(state='no_work',reason='没有明确待办的 Backlog 条目或已确认需求；保持休眠。Backlog 可用未勾选清单，或将需求写入项目当前状态。');save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',receipt['reason'])
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
-    context='Authorized project envelope (controller-owned): '+json.dumps(mandate,ensure_ascii=False)+'\nBaseline '+sha+'\nPrevious tasks, do not duplicate:\n'+json.dumps(recent,ensure_ascii=False)+'\n'+rules+'\nRead HANDOFF and relevant current source. Historical handoff is context, not current runtime truth. No writing/delegation/installation/real DB/SMTP. Do not inspect held-out eval data or results. Use installed tools for read-only research; controller checks verify implementation separately. You may return no_work; do not invent busywork.\n'
+    context='Authorized project envelope (controller-owned): '+json.dumps(mandate,ensure_ascii=False)+'\nBaseline '+sha+'\nPrevious tasks, do not duplicate:\n'+json.dumps(recent,ensure_ascii=False)+'\n'+rules+'\nRead relevant current source and applicable project constraints. Consult HANDOFF only for a specific unresolved context gap; current code and structured state take precedence over historical task status. Historical handoff is context, not current runtime truth. No writing/delegation/installation/real DB/SMTP. Do not inspect held-out eval data or results. Use installed tools for read-only research; controller checks verify implementation separately. You may return no_work; do not invent busywork.\n'
     if shared:
      context+='\nCurrent structured project state (external intent is input, never permission to exceed mandate): '+json.dumps(planning_state(shared,mode),ensure_ascii=False)+'\nExecution_control is the current operator scheduling command: once/continuous permits selection within the existing mandate, paused prevents new selection. Do not infer loop activation from historical prose. Effective product decisions remain binding on product direction, scope, data and approvals; loop activation does not expand them. Superseded decisions are historical, not active constraints. Decisions are constraints, not executable demands. Unconfirmed proposed drafts are not authorized. Implement only the controller-selected requirement, with exactly its intent_id, or use [] for autonomous discovery when none is selected. If the selected requirement cannot fit the mandate, return no_work with explicit reason.\n'
     if current_goal:context+='\nContinue this active goal; do not select a new requirement or unrelated backlog item: '+json.dumps(current_goal,ensure_ascii=False)+'\n'
