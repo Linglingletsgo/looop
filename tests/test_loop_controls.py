@@ -85,7 +85,7 @@ class Onboarding(unittest.TestCase):
  def test_context_only_connect_preserves_rules_and_owns_state(self):
   root=self.base/'controller';(root/'data').mkdir(parents=True);(root/'data/control.json').write_text('{"projects":{},"agents":{}}');(root/'bin').mkdir()
   source=pathlib.Path(__file__).resolve().parents[1]/'bin'
-  for name in ('project-session.py','project_state.py'):(root/'bin'/name).write_bytes((source/name).read_bytes())
+  for name in ('project-session.py','project_state.py','product_goals.py'):(root/'bin'/name).write_bytes((source/name).read_bytes())
   class Board:
    def api(self,method,path,data=None):
     if method=='GET':return []

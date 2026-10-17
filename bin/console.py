@@ -4,6 +4,7 @@ import json,pathlib,time
 from runtime import ROOT
 from project_state import Store
 from loop_control import view
+from product_goals import summary as goal_summary
 
 LABELS={'idle':'等待有价值的工作','ready':'需求已就绪','waiting':'等待','discovering':'PM 选题中','queued':'排队中','defining':'定义任务','building':'开发中','checking':'检查中','reviewing':'审查中','acceptance':'项目验收','pr_ready':'PR 已就绪','waiting_merge':'等待合并','verifying':'主线复验','completed':'已完成','blocked':'执行受阻','waiting_decision':'等待决定','external_work':'独立开发中','cancelled':'已取消'}
 def read(path,default):
@@ -30,7 +31,7 @@ def status(root=ROOT,companies=()):
    evidence=task.get('evidence',{});recent.append({'id':task['id'],'title':task.get('packet',{}).get('title',task['id']),'phase':task['phase'],'label':LABELS.get(task['phase'],task['phase']),'sha':evidence.get('target_sha'),'pr_url':evidence.get('pr_url'),'holds':len(task.get('holds',[]))})
   works=[{'id':w['id'],'status':w['status'],'summary':w['summary'],'updated_at':w.get('updated_at'),'verification':'self_reported'} for w in list(doc.get('external_work',{}).values())[-3:]]
   # Return a narrow projection, never configs, role prompts, raw logs or credentials.
-  projects.append({'id':lane,'name':{'gtp':'Goal to People','mainline':'WOS 主线'}.get(lane,cfg.get('name',lane)),'company':cfg.get('company',config.get('company')),'paperclip_id':cfg.get('id'),'company_prefix':prefixes.get(cfg.get('company',config.get('company'))),'mode':mode,'loop':loop,'test':test,'phase':phase,'label':LABELS.get(phase,phase),'next_action':doc['next_action'],'revision':doc['revision'],'updated_at':doc.get('updated_at'),'workflow':workflow,'tasks':recent,'active_count':len(active),'attention':attention[:10],'independent_work':works,'intents':[{'id':i['id'],'kind':i['kind'],'title':i['title'],'body':i['body'][:4000],'status':i['status'],'priority':i['priority']} for i in intents[-5:]]})
+  projects.append({'id':lane,'name':{'gtp':'Goal to People','mainline':'WOS 主线'}.get(lane,cfg.get('name',lane)),'company':cfg.get('company',config.get('company')),'paperclip_id':cfg.get('id'),'company_prefix':prefixes.get(cfg.get('company',config.get('company'))),'mode':mode,'loop':loop,'test':test,'research':{k:v for k,v in (doc.get('research') or {}).items() if k in ('status','question','finding','counterevidence','recommendation','skill_usage')},'product_goal':goal_summary(doc),'scope_note':'当前仅允许测试验证，不能实现新的产品能力。' if (policy or {}).get('task_kind')=='test_only' else None,'phase':phase,'label':LABELS.get(phase,phase),'next_action':doc['next_action'],'revision':doc['revision'],'updated_at':doc.get('updated_at'),'workflow':workflow,'tasks':recent,'active_count':len(active),'attention':attention[:10],'independent_work':works,'intents':[{'id':i['id'],'kind':i['kind'],'title':i['title'],'body':i['body'][:4000],'status':i['status'],'priority':i['priority']} for i in intents[-5:]]})
  from execution_settings import read as read_settings
  selected=set(read_settings(root).get('routes',{}).values())
  providers=[]

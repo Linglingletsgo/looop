@@ -145,9 +145,15 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    if planning_revision is not None and doc['planning_revision']!=planning_revision:raise Conflict('External decisions changed during planning; replan before dispatch')
    if any(t.get('holds') for t in doc['tasks'].values()):raise Held('Unresolved change holds dispatch')
    if any(w['status']=='active' for w in doc.get('external_work',{}).values()):raise Held('External development active; new dispatch paused')
+   from product_goals import active,bind as bind_goal
+   current=active(doc)
    for i in intent_ids or []:
-    if i not in doc['intents'] or doc['intents'][i]['status']!='ready':raise Conflict('Source intent is no longer ready')
+    if i not in doc['intents'] or not (doc['intents'][i]['status']=='ready' or current and i in current.get('intent_ids',[]) and doc['intents'][i]['status']=='scheduled'):raise Conflict('Source intent is no longer ready')
+   goal_contract=(provenance or {}).get('product_goal')
+   if current and not goal_contract:raise Conflict('New tasks must continue the active product goal')
+   goal=bind_goal(doc,job,goal_contract,intent_ids or []) if goal_contract else None
    doc['tasks'][job]={'id':job,'phase':'queued','packet':packet,'contract_hash':digest({k:v for k,v in packet.items() if k!='execution_notes'}),'intent_ids':intent_ids or [],'holds':[],'evidence':provenance or {}}
+   if goal:doc['tasks'][job]['goal_id']=goal['id']
    for i in intent_ids or []:doc['intents'][i]['status']='scheduled'
    return doc['tasks'][job]
   return self.mutate(lane,'bind-'+job,command,apply)
@@ -160,12 +166,48 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    if task['phase']==phase and all(task.get('evidence',{}).get(k)==v for k,v in evidence.items()):return None
    if phase!=task['phase'] and not import_existing and phase not in NEXT[task['phase']]:raise Conflict('Invalid transition '+task['phase']+' -> '+phase)
    if task['phase'] in ('completed','cancelled') and phase!=task['phase']:raise Conflict('Terminal task cannot be reopened')
+   previous_phase=task['phase']
    task.update(phase=phase,evidence={**task.get('evidence',{}),**evidence})
+   from product_goals import transition as goal_transition
+   continuing=goal_transition(doc,task,phase,previous_phase)
    for i in task['intent_ids']:
-    if phase=='completed':doc['intents'][i]['status']='completed'
+    if phase=='completed':doc['intents'][i]['status']='scheduled' if continuing else 'completed'
+    elif phase=='queued':doc['intents'][i]['status']='scheduled'
     elif phase=='blocked':doc['intents'][i]['status']='blocked'
    return task
   return self.mutate(lane,'phase-'+job+'-'+uuid.uuid4().hex,command,apply)
+ def record_research(self,lane,report,planning_revision):
+  if not isinstance(report,dict) or report.get('status') not in ('supported','rejected','insufficient_evidence'):raise ValueError('Invalid current research brief')
+  if len(json.dumps(report,ensure_ascii=False).encode())>100000:raise ValueError('Research brief must remain bounded')
+  def apply(doc):
+   if doc['planning_revision']!=planning_revision:raise Conflict('External decisions changed during research')
+   doc['research']=report
+   return report
+  return self.mutate(lane,'research-'+uuid.uuid4().hex,{'type':'research_updated'},apply)
+ def finish_goal(self,lane,goal_id,reason,evidence,planning_revision):
+  def apply(doc):
+   from product_goals import active
+   goal=active(doc)
+   if doc['planning_revision']!=planning_revision:raise Conflict('External decisions changed during goal verification')
+   if not goal or goal['id']!=goal_id:raise Conflict('Active goal changed')
+   if any(t['phase'] not in ('completed','cancelled') for t in doc['tasks'].values()):raise Held('Deliveries must finish before goal completion')
+   if not goal.get('completed_slices'):raise Held('Goal completion requires delivered work')
+   if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Concise goal completion reason required')
+   if not isinstance(evidence,list) or any(not isinstance(e,dict) for e in evidence) or [e.get('criterion') for e in evidence]!=goal['success_criteria']:raise ValueError('Evidence for every product success criterion required')
+   goal.update(status='completed',progress_verification='pm_evidence_reviewed',remaining=[],progress=reason,completion_reason=reason,completion_evidence=evidence,current_task=None)
+   for i in goal.get('intent_ids',[]):doc['intents'][i]['status']='completed'
+   doc['planning_revision']+=1;doc['selection']=None
+   return goal
+  return self.mutate(lane,'goal-complete-'+goal_id,{'type':'goal_completed','goal_id':goal_id,'reason':reason,'evidence':evidence},apply)
+ def wait_goal(self,lane,reason,planning_revision):
+  def apply(doc):
+   from product_goals import active
+   goal=active(doc)
+   if doc['planning_revision']!=planning_revision:raise Conflict('External decisions changed during planning')
+   if not goal:raise Conflict('No active product goal')
+   goal.update(status='waiting',progress=reason)
+   return goal
+  return self.mutate(lane,'goal-wait-'+uuid.uuid4().hex,{'type':'goal_wait','reason':reason},apply)
  def defer_intent(self,lane,intent,reason,planning_revision):
   def apply(doc):
    if doc['planning_revision']!=planning_revision:raise Conflict('External decisions changed during planning')
@@ -197,6 +239,9 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
     if not item or item['source']!=source or item['status']!='active':raise Conflict('No active work owned by this source')
     if action in ('finish','cancel'):item['status']='completed' if action=='finish' else 'cancelled'
    item.update(summary=summary,updated_at=time.time(),verification='self_reported')
+   from product_goals import active
+   goal=active(doc)
+   if goal:goal.update(progress=summary,progress_verification='self_reported')
    if action!='progress':doc['planning_revision']+=1;doc['selection']=None
    return item
   return self.mutate(lane,request_id,{'type':'external_work',**command},apply,expected,source)
@@ -237,6 +282,10 @@ def recompute(doc):
  if selection and selection['phase'] in ('discovering','blocked'):doc.update(phase=selection['phase'],next_action='PM defines one task' if selection['phase']=='discovering' else 'Inspect PM evidence; no automatic replay');return
  if selection and selection['phase']=='waiting':
   doc.update(phase='waiting',next_action=selection['detail']);return
+ from product_goals import active
+ goal=active(doc)
+ if goal:
+  doc.update(phase='waiting' if goal['status']=='waiting' else 'ready',next_action=goal['progress'] if goal['status']=='waiting' else 'PM continues the active product goal');return
  ready=[i for i in doc['intents'].values() if i['status']=='ready' and i['kind'] in ('requirement','propose')]
  if not ready and any(i['status']=='waiting_decision' for i in doc['intents'].values()):
   doc.update(phase='waiting_decision',next_action='Review deferred requirement reasons; clarify scope or reprioritize to retry');return

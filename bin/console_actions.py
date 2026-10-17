@@ -23,8 +23,10 @@ def evidence(root,lane,task):
  doc=Store(root).read(lane);item=doc['tasks'].get(task)
  if not item:raise ValueError('Unknown project task')
  state_path=root/'data/deliveries'/task/'state.json';state=json.loads(state_path.read_text()) if state_path.exists() else {}
+ research=item.get('evidence',{}).get('research') or {}
+ brief={k:research[k] for k in ('status','question','finding','counterevidence','recommendation','skill_usage','loaded_skills','sources','source_gap') if k in research}
  # No raw logs/check output/environment dumps are exposed.
- return {'title':item.get('packet',{}).get('title',task),'phase':item['phase'],'requirements':item.get('packet',{}).get('requirements',[]),'acceptance':item.get('packet',{}).get('acceptance',[]),'allowed_paths':item.get('packet',{}).get('allowed_paths',[]),'holds':item.get('holds',[]),'evidence':{k:v for k,v in item.get('evidence',{}).items() if k in ('target_sha','pr_url','mainline_verified','error','merge_wait_reason','mainline_wait_reason')},'failed_stage':state.get('failed_stage'),'failure':{k:v for k,v in state.get('failure',{}).items() if k in ('category','retryable','next_action')},'retry_possible':item['phase']=='blocked' and not state.get('pr_url')}
+ return {'research':brief,'goal_id':item.get('goal_id'),'title':item.get('packet',{}).get('title',task),'phase':item['phase'],'requirements':item.get('packet',{}).get('requirements',[]),'acceptance':item.get('packet',{}).get('acceptance',[]),'allowed_paths':item.get('packet',{}).get('allowed_paths',[]),'holds':item.get('holds',[]),'evidence':{k:v for k,v in item.get('evidence',{}).items() if k in ('target_sha','pr_url','mainline_verified','error','merge_wait_reason','mainline_wait_reason')},'failed_stage':state.get('failed_stage'),'failure':{k:v for k,v in state.get('failure',{}).items() if k in ('category','retryable','next_action')},'retry_possible':item['phase']=='blocked' and not state.get('pr_url')}
 
 def execute(value,root=ROOT):
  root=pathlib.Path(root);action=value.get('action')

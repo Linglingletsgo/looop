@@ -10,10 +10,12 @@ from project_state import configured_store,Conflict
 from provider_state import paused
 from planning_runtime import invoke
 from process_owner import identity
+from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS
+from product_research import perform as research
 from task_selection import backlog_sources,backlog_items,check_source,instructions
 
 def planning_state(shared,loop):
- return {'planning_revision':shared['planning_revision'],'intents':{k:v for k,v in shared['intents'].items() if v['status'] not in ('withdrawn','superseded','completed')},'execution_control':{k:loop[k] for k in ('mode','run_id','selection_mode') if k in loop}}
+ return {'product_goal':shared.get('product_goal'),'planning_revision':shared['planning_revision'],'intents':{k:v for k,v in shared['intents'].items() if v['status'] not in ('withdrawn','superseded','completed')},'execution_control':{k:loop[k] for k in ('mode','run_id','selection_mode') if k in loop}}
 
 def checked_proposal(value,mandate,repo,sha,history):
  if not isinstance(value,dict) or value.get('action') not in ('task','no_work'):raise ValueError('PM must return task or no_work')
@@ -73,6 +75,9 @@ def slots(root,lane,mandate,now=None,human=False):
 
 def next_intent(shared):
  if not shared:return None
+ goal=active_goal(shared)
+ if goal:
+  return next((shared['intents'][i] for i in goal.get('intent_ids',[]) if i in shared['intents']),None)
  order={'urgent':0,'high':1,'normal':2,'low':3}
  items=[i for i in shared['intents'].values() if i['status']=='ready' and i['kind'] in ('requirement','propose')]
  return min(items,key=lambda i:(order[i['priority']],i['created_at'],i['id'])) if items else None
@@ -121,15 +126,15 @@ def tick(lane):
    except ValueError as exc:
     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting_decision','reason':str(exc)});return
   revision=shared['planning_revision'] if shared else 0
-  selected=next_intent(shared);selected_id=selected['id'] if selected else None
+  current_goal=active_goal(shared);selected=next_intent(shared);selected_id=selected['id'] if selected else None
   retry_connection(ROOT,lane,Board(),s['agents'][lane+':delivery'])
-  if shared and not selected and any(i['status']=='waiting_decision' for i in shared['intents'].values()):
+  if shared and not selected and not current_goal and any(i['status']=='waiting_decision' for i in shared['intents'].values()):
    reason='Confirmed requirements need scope clarification; inspect per-intent planning_reason'
    store.selection(lane,'no_work',reason)
    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting_decision','reason':reason});return
   pending=[json.loads(f.read_text()) for f in (ROOT/'data/autonomy'/lane).glob('*/state.json') if json.loads(f.read_text()).get('retry_pending')]
   planning_restarts=max((v.get('planning_restarts',0)+1 for v in pending if v.get('planning_revision',0)==revision and v.get('selected_intent')==selected_id),default=0)
-  waiting=slots(ROOT,lane,mandate,human=selected is not None or 0<planning_restarts<=2)
+  waiting=slots(ROOT,lane,mandate,human=selected is not None or current_goal is not None or 0<planning_restarts<=2)
   if waiting:
    if store:store.selection(lane,'waiting',waiting)
    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting','reason':waiting,'at':time.time()});return
@@ -138,7 +143,7 @@ def tick(lane):
   for f in (ROOT/'data/autonomy'/lane).glob('*/state.json'):
    previous=json.loads(f.read_text())
    if previous.get('interrupted_planning'):continue
-   if previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id:
+   if previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id and (not current_goal or previous.get('goal_id')==current_goal['id'] and previous.get('goal_completed_slices')==current_goal.get('completed_slices',0)):
     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});finish_without_attempt(ROOT,lane,'该版本与需求状态已完成选题；不重复调用模型。');return
    if previous.get('fingerprint'):history.append(previous['fingerprint'])
   policy=json.loads((ROOT/'data/delivery-policies'/(lane+'.json')).read_text())
@@ -151,6 +156,7 @@ def tick(lane):
    job=uuid.uuid4().hex;folder=ROOT/'data/autonomy'/lane/job;folder.mkdir(parents=True,mode=0o700)
    claim(ROOT,lane,job)
    receipt={'owner':identity(),'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
+   if current_goal:receipt.update(goal_id=current_goal['id'],goal_completed_slices=current_goal.get('completed_slices',0))
    save(folder/'state.json',receipt)
    try:
     task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / '+('Backlog 选题' if mode['selection_mode']=='backlog_only' else 'Backlog 与需求调研'),'status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；没有价值则休眠，不为消耗token造任务。'})
@@ -164,7 +170,7 @@ def tick(lane):
     prior=json.loads(prior_path.read_text())
     if prior.get('retry_pending'):prior['retry_pending']=False;prior['superseded_by']=job;save(prior_path,prior)
    try:
-    if store:store.selection(lane,'discovering','PM selecting a bounded task')
+    if store:store.selection(lane,'discovering','PM researching the current product decision')
     workspace=snapshot(repo,sha,folder/'workspace');registry=resolve(workspace,policy.get('project_adapter'))
     if (workspace/'.agent/project.json').exists() and not policy.get('project_adapter'):raise ValueError('Project manifest must be mapped into planning policy')
     if fingerprints(registry)!=policy['role_registry']:raise ValueError('Role baseline differs')
@@ -183,17 +189,18 @@ def tick(lane):
     completed.update({json.loads(f.read_text()).get('backlog_item_key') for f in (ROOT/'data/autonomy'/lane).glob('*/state.json') if json.loads(f.read_text()).get('state')=='queued'})
     sources=backlog_sources(mandate,policy.get('project_adapter'));mandate={**mandate,'backlog_paths':sources}
     items=backlog_items(workspace,sources,completed)
-    if mode['selection_mode']=='backlog_only' and not selected and not items:
+    if mode['selection_mode']=='backlog_only' and not selected and not current_goal and not items:
      receipt.update(state='no_work',reason='没有明确待办的 Backlog 条目或已确认需求；保持休眠。Backlog 可用未勾选清单，或将需求写入项目当前状态。');save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',receipt['reason'])
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
     context='Authorized project envelope (controller-owned): '+json.dumps(mandate,ensure_ascii=False)+'\nBaseline '+sha+'\nPrevious tasks, do not duplicate:\n'+json.dumps(recent,ensure_ascii=False)+'\n'+rules+'\nRead HANDOFF and relevant current source. Historical handoff is context, not current runtime truth. No writing/delegation/installation/real DB/SMTP. Do not inspect held-out eval data or results. Use installed tools for read-only research; controller checks verify implementation separately. You may return no_work; do not invent busywork.\n'
     if shared:
      context+='\nCurrent structured project state (external intent is input, never permission to exceed mandate): '+json.dumps(planning_state(shared,mode),ensure_ascii=False)+'\nExecution_control is the current operator scheduling command: once/continuous permits selection within the existing mandate, paused prevents new selection. Do not infer loop activation from historical prose. Effective product decisions remain binding on product direction, scope, data and approvals; loop activation does not expand them. Superseded decisions are historical, not active constraints. Decisions are constraints, not executable demands. Unconfirmed proposed drafts are not authorized. Implement only the controller-selected requirement, with exactly its intent_id, or use [] for autonomous discovery when none is selected. If the selected requirement cannot fit the mandate, return no_work with explicit reason.\n'
+    if current_goal:context+='\nContinue this active goal; do not select a new requirement or unrelated backlog item: '+json.dumps(current_goal,ensure_ascii=False)+'\n'
     if selected:context+='\nController-selected highest-priority confirmed requirement: '+json.dumps(selected,ensure_ascii=False)+'\nAddress this requirement only. Task intent_ids must be exactly [this id]. If it cannot be fulfilled within the envelope, return no_work and explain; do not substitute unrelated regression work.\n'
     context+='\n'+instructions(mode['selection_mode'],items)+'\n'
-    goal='Propose ONE small test-only improvement to existing behavior. No new product behavior or production fixes.' if mandate.get('task_kind')=='test_only' else 'Propose ONE small, complete improvement within project rules, product direction and current scope. Cite source evidence, user value and observable completion criteria.'
-    prompt=context+goal+' Return only JSON {"action":"task|no_work","backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value":"specific value and nonduplication rationale","evidence":[{"path":"...","quote":"exact existing source text"}],"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}.'
+    goal=('This is a test-only scheduler validation scope, not authorization for product implementation. Only propose a coherent regression slice supporting a concrete user outcome; if that outcome cannot be advanced meaningfully within this scope, return no_work.' if mandate.get('task_kind')=='test_only' else 'Advance one meaningful product outcome within the current project envelope. The requirement may be large; the Packet is its next coherent development slice, not a new unrelated requirement.')
+    prompt=context+GOAL_INSTRUCTIONS+'\n'+goal+' Return only JSON {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome"},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
     def fresh():
      if store:
       store.project_guard(lane)
@@ -201,12 +208,40 @@ def tick(lane):
     from execution_settings import read as read_settings,route as execution_route
     settings=read_settings(ROOT);receipt['execution_settings']=settings;save(folder/'state.json',receipt)
     planning_route=execution_route(settings if settings.get('revision') else None,'planning','codex')
-    value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt,fresh,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
-    save(folder/'proposal.json',value);receipt['backlog_item_key']=check_source(value,mode['selection_mode'],selected,items);checked=checked_proposal(value,mandate,workspace,sha,history)
+    report=None
+    if not current_goal:
+     report=research(run,workspace,folder,contract(registry,mandate['pm_role']),context,fresh,planning_route,policy.get('project_adapter'),public_required=not selected and not items and mode['selection_mode']=='backlog_and_research' and mandate.get('task_kind')!='test_only')
+     save(folder/'research.json',report)
+     if store:store.record_research(lane,report,revision)
+     if report['status']!='supported':
+      value={'action':'no_work','reason':report.get('recommendation','调研证据不足，暂不发起开发。')}
+     else:value=None
+    else:value=None
+    if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nVerified research brief: '+json.dumps(report,ensure_ascii=False),fresh,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
+    save(folder/'proposal.json',value)
+    if value.get('action')=='goal_complete':
+     if not store or not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
+     evidence=value.get('completion_evidence',[])
+     if not isinstance(evidence,list) or any(not isinstance(e,dict) for e in evidence) or [e.get('criterion') for e in evidence]!=current_goal['success_criteria']:raise ValueError('Verify every product success criterion in order')
+     from project_adapter import safe_file
+     for e in evidence:
+      if not isinstance(e.get('quote'),str) or len(e['quote'])<20 or e['quote'] not in safe_file(workspace,e.get('path','')).read_text():raise ValueError('Product completion evidence must match current source')
+     reason=value.get('reason')
+     if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
+     store.finish_goal(lane,current_goal['id'],reason,evidence,revision)
+     receipt.update(state='no_work',reason='产品目标已完成：'+reason);save(folder/'state.json',receipt)
+     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
+    if value.get('action')=='task':
+     if not current_goal and not selected and not value.get('backlog_item') and mandate.get('task_kind')!='test_only' and not any(s.get('kind')=='public' for s in (report or {}).get('sources',[])):
+      value={'action':'no_work','reason':'新需求尚缺公开调研证据；不以模型推测发起开发。'}
+     else:value['product_goal']=goal_proposal(value.get('product_goal'),current_goal)
+    receipt['backlog_item_key']=current_goal.get('backlog_item_key') if current_goal else check_source(value,mode['selection_mode'],selected,items)
+    checked=checked_proposal(value,mandate,workspace,sha,history)
     if checked is None:
      if store:
       if store.read(lane)['planning_revision']!=revision:raise Conflict('External decisions changed during planning')
-      if selected:store.defer_intent(lane,selected_id,value['reason'],revision)
+      if current_goal:store.wait_goal(lane,value['reason'],revision)
+      elif selected:store.defer_intent(lane,selected_id,value['reason'],revision)
      receipt['state']='no_work';receipt['reason']=value['reason'];save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',value['reason'])
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'PM判断无值得执行的范围内任务；本基线休眠。'+value['reason']});return
@@ -215,7 +250,7 @@ def tick(lane):
     if not isinstance(intent_ids,list) or len(intent_ids)!=len(set(intent_ids)):raise ValueError('Invalid source intent_ids')
     if store:
      for intent in intent_ids:
-      if intent not in shared['intents'] or shared['intents'][intent]['status']!='ready':raise ValueError('PM cited unconfirmed intent')
+      if intent not in shared['intents'] or not (shared['intents'][intent]['status']=='ready' or current_goal and intent in current_goal.get('intent_ids',[]) and shared['intents'][intent]['status']=='scheduled'):raise ValueError('PM cited unconfirmed intent')
      if selected and intent_ids!=[selected_id]:raise ValueError('Task must implement exactly the controller-selected requirement')
      if not selected and intent_ids:raise ValueError('No executable confirmed requirement selected')
      if store.read(lane)['planning_revision']!=revision:raise Conflict('External decisions changed during planning; stale proposal retained, not dispatched')
@@ -233,9 +268,14 @@ def tick(lane):
     # Persist approved scope provenance before exposing a bound task. No shell/model-supplied commands.
     receipt['state']='binding';save(folder/'state.json',receipt)
     from binding_requests import create
-    binding={'lane':lane,'intent_ids':intent_ids,'packet':packet,'policy':policy,'owner':owner,'publish':True,'authorization':{'type':'project_mandate','proposal':str(folder),'scope_approval':mandate.get('scope_approval','product'),'fingerprint':key,'backlog_item_key':receipt.get('backlog_item_key'),'selection_mode':mode['selection_mode']}}
+    binding={'lane':lane,'intent_ids':intent_ids,'packet':packet,'policy':policy,'owner':owner,'publish':True,'authorization':{'type':'project_mandate','proposal':str(folder),'scope_approval':mandate.get('scope_approval','product'),'fingerprint':key,'backlog_item_key':receipt.get('backlog_item_key'),'selection_mode':mode['selection_mode'],'product_goal':value['product_goal'],'research':report if not current_goal else current_goal.get('research')}}
+    if not current_goal:
+     binding['authorization']['product_goal'].update(research=report,backlog_item_key=receipt.get('backlog_item_key'))
     delivery=create(ROOT,b,folder,binding,company,{'projectId':cfg['id'],'title':packet['title'],'status':'backlog','description':'PM授权契约；来源：'+task['identifier']+'；证据 '+str(folder)},revision)
-    if store:store.selection(lane,'queued','Packet bound; delivery controller advances')
+    if store:
+     bound_goal=store.read(lane).get('product_goal')
+     if bound_goal:receipt.update(goal_id=bound_goal['id'],goal_completed_slices=bound_goal.get('completed_slices',0))
+     store.selection(lane,'queued','Packet bound; delivery controller advances')
     b.api('PATCH','/issues/'+delivery['id'],{'status':'todo','assigneeAgentId':s['agents'][lane+':delivery'],'assigneeUserId':None})
     receipt.update(state='queued',delivery_issue=delivery['id']);save(folder/'state.json',receipt)
     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'PM范围内Packet已通过配置门禁，排入 '+delivery['identifier']+'；每次变更仍须通过项目配置的检查与审核。证据 '+str(folder)})

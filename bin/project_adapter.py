@@ -22,6 +22,8 @@ def validate(config):
  for key in ('common','reference'):
   if not isinstance(config.get('rules',{}).get(key,[]),list) or not all(isinstance(n,str) for n in config.get('rules',{}).get(key,[])):raise ValueError('Invalid rule file list')
  if not isinstance(config.get('rules',{}).get('by_role',{}),dict):raise ValueError('by_role must map role names to file lists')
+ research=config.get('research',{})
+ if not isinstance(research,dict) or not isinstance(research.get('skill_paths',[]),list) or not all(isinstance(v,str) and v.endswith('/SKILL.md') for v in research.get('skill_paths',[])):raise ValueError('research.skill_paths must name project SKILL.md files')
  if not isinstance(config.get('workflow_mapping',''),str):raise ValueError('workflow_mapping must be text')
  for role,paths in config.get('rules',{}).get('by_role',{}).items():
   if not isinstance(role,str) or not isinstance(paths,list) or not all(isinstance(n,str) for n in paths):raise ValueError('Invalid per-role rule list')
@@ -37,7 +39,7 @@ def load(root,explicit=None):
  return validate(found) if found is not None else None
 
 def files(config):
- rules=config.get('rules',{});return set(rules.get('common',[])+rules.get('reference',[])+[p for v in rules.get('by_role',{}).values() for p in v]+[p for v in config.get('roles',{}).values() for p in v])
+ rules=config.get('rules',{});return set(rules.get('common',[])+rules.get('reference',[])+config.get('research',{}).get('skill_paths',[])+[p for v in rules.get('by_role',{}).values() for p in v]+[p for v in config.get('roles',{}).values() for p in v])
 
 def evidence(root,config):
  result={n:hashlib.sha256(safe_file(root,n).read_bytes()).hexdigest() for n in files(config)|set(native_files(root,config.get('allowed_paths',[])))}

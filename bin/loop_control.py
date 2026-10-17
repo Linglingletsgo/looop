@@ -41,18 +41,28 @@ def claim(root,lane,job):
   if value['mode']=='paused':raise Conflict('新选题已暂停。')
   if value['mode']!='once':return None
   if value.get('attempt'):raise Conflict('本次单次执行已领取规划任务。')
-  value={k:v for k,v in value.items() if k not in ('configured','allowed','limits','selection_mode')};value.update(attempt=job,status='running',reason='本次只选择一个任务；交付或无工作结果后停止。');doc['loop_control']=value;return value
+  value={k:v for k,v in value.items() if k not in ('configured','allowed','limits','selection_mode')};value.update(attempt=job,status='running',reason='本次推进一个产品目标；可连续交付多个切片，目标完成或受阻后停止。');doc['loop_control']=value;return value
  return store.mutate(lane,'loop-claim-'+job,{'type':'loop_claim','job':job},apply)
 
 def settle(root,lane):
  root=pathlib.Path(root);store=Store(root);value=view(root,lane)
  if value['mode']!='once' or not value.get('attempt'):return value
  receipt=read(root/'data/autonomy'/lane/value['attempt']/'state.json',{})
- reason=None
+ reason=None;state={}
  if receipt.get('state') in ('no_work','rejected','blocked','cancelled'):reason='单次选题已结束：'+receipt.get('reason',receipt.get('error',receipt['state']))
  elif receipt.get('delivery_issue'):
   state=read(root/'data/deliveries'/receipt['delivery_issue']/'state.json',{})
   if state.get('state') in ('validated','closed','blocked') or state.get('mainline_verified'):reason='单次交付已结束：'+state.get('state','completed')
+ if reason and receipt.get('delivery_issue') and (state.get('state')=='validated' or state.get('mainline_verified')):
+  from product_goals import active
+  goal=active(store.read(lane))
+  if goal and goal.get('status')=='active':
+   def continue_goal(doc):
+    current=doc.get('loop_control',{})
+    if current.get('mode')!='once' or current.get('attempt')!=value.get('attempt'):return None
+    current.pop('attempt',None);current.update(status='requested',reason='当前切片已交付，继续同一产品目标；不选择无关新需求。');return current
+   store.mutate(lane,'loop-continue-'+value['attempt'],{'type':'loop_continue_goal','goal_id':goal['id']},continue_goal)
+   return view(root,lane)
  if reason:
   def apply(doc):
    current=doc.get('loop_control',{})

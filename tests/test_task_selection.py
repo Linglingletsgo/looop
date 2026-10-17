@@ -36,6 +36,7 @@ class Selection(unittest.TestCase):
   with self.assertRaises(ValueError):check_source({'action':'task'},'backlog_only',None,items)
   self.assertIsNone(check_source({'action':'task'},'backlog_and_research',None,items))
  def test_empty_backlog_makes_no_model_calls(self):
+  self.research_mock.return_value['sources'].append({'kind':'public','url':'https://example.com/research','quote':'Verified fixture research supporting the new requirement.'})
   self.mandate['backlog_paths']=[];self.setup_tick()
   class Board:
    def api(self,m,p,d=None):
@@ -45,6 +46,7 @@ class Selection(unittest.TestCase):
    autonomy.tick('test');autonomy.tick('test');run.assert_not_called()
   self.assertFalse((self.root/'data/delivery-bindings').exists())
  def test_research_without_backlog_allowed_and_scope_preserved(self):
+  self.research_mock.return_value['sources'].append({'kind':'public','url':'https://example.com/research','quote':'Verified fixture research supporting the new requirement.'})
   self.mandate['backlog_paths']=[];self.setup_tick();store=Store(self.root);store.ensure('test');set_settings(self.root,'test',None,'backlog_and_research',0,'research');self.value.pop('backlog_item')
   class Board:
    def api(self,m,p,d=None):
