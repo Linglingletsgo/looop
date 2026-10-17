@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
   tasks=doc['tasks'];active={k:v for k,v in tasks.items() if v['phase'] not in ('completed','cancelled')}
   recent=list(tasks.items())[-3:]
   selected=dict(recent);selected.update(active)
-  intents={k:v for k,v in doc['intents'].items() if v['status'] not in ('completed','withdrawn') or v['kind']=='decision'}
+  intents={k:v for k,v in doc['intents'].items() if v['status'] not in ('completed','withdrawn','superseded')}
   return {**doc,'tasks':selected,'intents':intents,'history_task_count':len(tasks),'history_intent_count':len(doc['intents'])}
  def mutate(self,lane,request_id,command,apply,expected=None,source='controller'):
   valid_lane(lane)
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
   if not isinstance(command,dict):raise ValueError('Command object required')
   if len(json.dumps(command,ensure_ascii=False))>32000:raise ValueError('Command too large; sync decisions, not transcript')
   kind=command.get('type')
-  if kind not in ('propose','requirement','decision','priority','change','confirm','resolve_change'):raise ValueError('External clients can submit intent, not execution transitions or policies')
+  if kind not in ('propose','requirement','decision','priority','change','confirm','resolve_change','supersede_decision'):raise ValueError('External clients can submit intent, not execution transitions or policies')
   def apply(doc):
    confirmed=kind not in ('propose',)
    if confirmed and command.get('human_confirmed') is not True:raise ValueError('Explicit human confirmation is required for effective decisions')
@@ -123,6 +123,11 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    if not isinstance(title,str) or not 1<=len(title)<=200 or not isinstance(body,str) or not 1<=len(body)<=16000:raise ValueError('Title and concise body required')
    if command.get('priority','normal') not in ('urgent','high','normal','low'):raise ValueError('Invalid priority')
    item_id='intent-'+uuid.uuid4().hex[:16];item={'id':item_id,'kind':kind,'title':title,'body':body,'priority':command.get('priority','normal'),'source':source,'created_at':time.time(),'status':'proposed' if kind=='propose' else 'ready'}
+   if kind=='supersede_decision':
+    previous=doc['intents'].get(command.get('intent_id'))
+    if not previous or previous['kind']!='decision' or previous['status']!='ready':raise ValueError('Only an effective product decision can be superseded')
+    previous.update(status='superseded',superseded_by=item_id)
+    item.update(kind='decision',supersedes=previous['id'])
    if kind=='change':
     task=doc['tasks'].get(command.get('target_task'))
     if not task or task['phase'] in ('completed','cancelled','verifying'):raise ValueError('Change must target an existing nonterminal task; otherwise submit a new requirement')

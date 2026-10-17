@@ -38,7 +38,7 @@ def sync(root=ROOT,board=None):
     marker='<!-- project-state:'+lane+':'+item['id']+' -->'
     with store.connection(lane) as c:row=c.execute('SELECT issue FROM links WHERE lane=? AND item=?',(lane,item['id'])).fetchone()
     issue=row[0] if row else next((i['id'] for i in issues if marker in (i.get('description') or '')),None)
-    status={'completed':'done','withdrawn':'cancelled','blocked':'blocked','waiting_decision':'blocked'}.get(item['status'],'backlog')
+    status={'completed':'done','withdrawn':'cancelled','superseded':'cancelled','blocked':'blocked','waiting_decision':'blocked'}.get(item['status'],'backlog')
     body=marker+'\n\n结构化产品输入；状态：'+item['status']+'；类型：'+item['kind']+'；优先级：'+item['priority']+'\n\n'+item['body']+('\n\nPM待处理原因：'+item['planning_reason'] if item.get('planning_reason') else '')+'\n\n来源：'+item['source']+'\n\n此条是需求记录，不是可执行 Packet。项目授权边界仍有效。'
     payload={'title':'Product / '+item['title'],'description':body,'status':status}
     if issue:b.api('PATCH','/issues/'+issue,payload)
