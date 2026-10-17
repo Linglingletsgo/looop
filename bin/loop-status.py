@@ -17,7 +17,7 @@ def report(lane):
  policy=ROOT/'data/autonomy-policies'/(lane+'.json')
  if policy.exists():
   from loop_control import view
-  loop=view(ROOT,lane);m=json.loads(policy.read_text());rows+=['循环模式：'+loop['mode']+'；'+loop.get('reason',''),'允许文件：'+', '.join(m['allowed_paths']),'自主发现每天最多 '+str(m['max_proposals_per_day'])+' 次；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
+  loop=view(ROOT,lane);m=json.loads(policy.read_text());rows+=['循环模式：'+loop['mode']+'；'+loop.get('reason',''),'允许文件：'+', '.join(m['allowed_paths']),('自主发现每天不限次数' if loop['limits']['max_proposals_per_day'] is None else '自主发现每天最多 '+str(loop['limits']['max_proposals_per_day'])+' 次')+'；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
  from provider_state import paused
  for provider in ('codex','commandcode'):
   pause=paused(ROOT,provider)

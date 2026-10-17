@@ -4,4 +4,4 @@ Maintain Paperclip customization, scheduling, project adapters and skills in thi
 
 Project-owned current state is authoritative; code and executed checks are evidence. Keep logs/history bounded by retention.json. Preserve active work and unsynced events. Never use historical conversations or HANDOFF as fresh execution permission.
 
-Run tests on Linux with `python3 -m unittest discover -s tests`. Do not commit data/, logs/, caches, credentials, machine bindings or dependencies. Keep Paperclip in place. GTP autonomy remains paused, WOS automation disabled, DS1 human-only.
+Run tests on Linux with `python3 -m unittest discover -s tests`. Do not commit data/, logs/, caches, credentials, machine bindings or dependencies. Keep Paperclip in place. Loop modes follow explicit operator actions and current project state; do not infer activation from historical docs. WOS automation disabled, DS1 human-only.

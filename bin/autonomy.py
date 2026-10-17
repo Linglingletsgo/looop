@@ -50,7 +50,8 @@ def slots(root,lane,mandate,now=None,human=False):
  jobs=list((root/'data/autonomy'/lane).glob('*/state.json'))
  day=datetime.datetime.fromtimestamp(now,datetime.timezone.utc).strftime('%Y-%m-%d')
  count=sum((v:=json.loads(f.read_text())).get('day')==day and v.get('origin','autonomous_discovery')=='autonomous_discovery' and not v.get('planning_restarts',0) for f in jobs)
- if not human and count>=mandate['max_proposals_per_day']:return 'Daily autonomous discovery budget reached'
+ limit=mandate.get('max_proposals_per_day')
+ if not human and limit is not None and count>=limit:return 'Daily autonomous discovery budget reached'
  for f in jobs:
   if json.loads(f.read_text()).get('state') not in ('queued','no_work','rejected','cancelled'):return 'Unresolved planning attempt; inspect before replay'
  return None
@@ -87,7 +88,7 @@ def tick(lane):
  from loop_control import settle,view,claim,finish_without_attempt
  mode=settle(ROOT,lane)
  if not mode['allowed'] or mode['mode']=='paused' or mode['mode']=='once' and mode.get('attempt'):return
- mandate={**mandate,'enabled':True}
+ mandate={**mandate,'enabled':True,**mode['limits']}
  if mandate.get('scope_approval','product') not in ('pm','product'):raise ValueError('Unknown configured scope approval mode')
  if lane not in json.loads((ROOT/'data/control.json').read_text())['projects']:raise ValueError('Unknown project')
  global_lock=ROOT/'data/locks'/('autonomy-'+lane);global_lock.parent.mkdir(exist_ok=True)
@@ -96,6 +97,7 @@ def tick(lane):
   except BlockingIOError:return
   mode=view(ROOT,lane)
   if mode['mode']=='paused' or mode['mode']=='once' and mode.get('attempt'):return
+  mandate={**mandate,**mode['limits']}
   s=json.loads((ROOT/'data/control.json').read_text())
   store=configured_store(ROOT)
   shared=store.context(lane) if store else None

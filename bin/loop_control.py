@@ -13,7 +13,7 @@ def view(root,lane,doc=None):
   except ValueError:doc={}
  policy=read(root/'data/autonomy-policies'/(lane+'.json'),{})
  value=doc.get('loop_control',{'mode':'continuous' if policy.get('enabled') else 'paused','status':'legacy','reason':''})
- return {**value,'configured':bool(policy),'allowed':bool(policy) and lane not in ('mainline','ds1')}
+ return {**value,'configured':bool(policy),'allowed':bool(policy) and lane not in ('mainline','ds1'),'limits':doc.get('loop_limits',{'max_proposals_per_day':None})}
 
 def switch(root,lane,mode,expected,request_id):
  if mode not in ('paused','once','continuous'):raise ValueError('Unknown loop mode')
@@ -41,7 +41,7 @@ def claim(root,lane,job):
   if value['mode']=='paused':raise Conflict('新选题已暂停。')
   if value['mode']!='once':return None
   if value.get('attempt'):raise Conflict('本次单次执行已领取规划任务。')
-  value={k:v for k,v in value.items() if k not in ('configured','allowed')};value.update(attempt=job,status='running',reason='本次只选择一个任务；交付或无工作结果后停止。');doc['loop_control']=value;return value
+  value={k:v for k,v in value.items() if k not in ('configured','allowed','limits')};value.update(attempt=job,status='running',reason='本次只选择一个任务；交付或无工作结果后停止。');doc['loop_control']=value;return value
  return store.mutate(lane,'loop-claim-'+job,{'type':'loop_claim','job':job},apply)
 
 def settle(root,lane):
@@ -70,3 +70,13 @@ def finish_without_attempt(root,lane,reason):
   if current.get('run_id')!=value.get('run_id') or current.get('mode')!='once' or current.get('attempt'):return None
   current.update(mode='paused',status='finished',reason=reason);return current
  return store.mutate(lane,'loop-finish-'+value['run_id'],{'type':'loop_finished','reason':reason},apply)
+
+
+def set_limits(root,lane,daily_limit,expected,request_id):
+ if daily_limit is not None and (isinstance(daily_limit,bool) or not isinstance(daily_limit,int) or not 1<=daily_limit<=9007199254740991):raise ValueError('每日次数须为正整数，或留空表示不限。')
+ store=Store(root)
+ def apply(doc):
+  doc['loop_limits']={'max_proposals_per_day':daily_limit}
+  if doc.get('selection',{} ) and doc['selection'].get('detail')=='Daily autonomous discovery budget reached':doc['selection']=None
+  return doc['loop_limits']
+ return store.mutate(lane,request_id,{'type':'loop_limits','max_proposals_per_day':daily_limit},apply,expected,'looop-console')

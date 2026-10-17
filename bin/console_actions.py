@@ -2,7 +2,7 @@
 import fcntl,importlib.util,json,pathlib,sys,re
 from runtime import ROOT
 from project_state import Store,Conflict,valid_lane
-from loop_control import switch
+from loop_control import switch,set_limits,view
 
 def retry(root,lane,task,reason,expected):
  if not isinstance(task,str) or not re.fullmatch('[a-zA-Z0-9-]{1,80}',task):raise ValueError('Invalid task id')
@@ -41,6 +41,11 @@ def execute(value,root=ROOT):
   result=switch(root,lane,value['mode'],revision,request)
   from launch_loops import launch
   if value['mode']!='paused':launch(root,lane)
+  return result
+ if action=='limits':
+  result=set_limits(root,lane,value.get('daily_limit'),revision,request)
+  from launch_loops import launch
+  if view(root,lane)['mode']!='paused':launch(root,lane)
   return result
  if action=='intent':
   kind=value.get('kind','requirement')
