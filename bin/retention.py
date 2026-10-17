@@ -76,6 +76,11 @@ def maintain(root):
   if base.exists():
    for path in base.rglob('events.jsonl'):
     if trim_log(path,policy['log_bytes']):trimmed+=1
+ backups=root/data/backups
+ if backups.exists():
+  folders=sorted((p for p in backups.iterdir() if p.is_dir() and not p.is_symlink()),key=lambda p:p.stat().st_mtime,reverse=True)
+  for old in folders[policy[backup_limit]:]:
+   if old.stat().st_mtime<time.time()-policy[history_days]*86400:shutil.rmtree(old)
  report={'trimmed_logs':trimmed,'event_window':policy['event_limit'],'compacted_runs':removed,'at':time.time()}
  p=root/'data/retention-status.json';p.write_text(json.dumps(report,indent=2));return report
 if __name__=='__main__':
