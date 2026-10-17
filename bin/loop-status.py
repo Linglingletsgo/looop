@@ -16,7 +16,8 @@ def report(lane):
    if i['status']=='waiting_decision':rows.append('需求待处理：'+i['title']+'；'+i.get('planning_reason','待人工裁定'))
  policy=ROOT/'data/autonomy-policies'/(lane+'.json')
  if policy.exists():
-  m=json.loads(policy.read_text());rows+=['队列启用：'+str(m['enabled']),'允许文件：'+', '.join(m['allowed_paths']),'自主发现每天最多 '+str(m['max_proposals_per_day'])+' 次；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
+  from loop_control import view
+  loop=view(ROOT,lane);m=json.loads(policy.read_text());rows+=['循环模式：'+loop['mode']+'；'+loop.get('reason',''),'允许文件：'+', '.join(m['allowed_paths']),'自主发现每天最多 '+str(m['max_proposals_per_day'])+' 次；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
  from provider_state import paused
  for provider in ('codex','commandcode'):
   pause=paused(ROOT,provider)

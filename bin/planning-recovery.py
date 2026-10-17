@@ -8,7 +8,9 @@ def reconcile(root,board):
  cfg=json.loads((root/'data/control.json').read_text());results=[]
  for lane,project in cfg['projects'].items():
   policy=root/'data/autonomy-policies'/(lane+'.json')
-  if not policy.exists() or not json.loads(policy.read_text()).get('enabled'):continue
+  from loop_control import view
+  mode=view(root,lane)
+  if not policy.exists() or mode['mode']=='paused':continue
   lock=root/'data/locks'/('autonomy-'+lane);lock.parent.mkdir(exist_ok=True)
   with lock.open('w') as h:
    try:fcntl.flock(h,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -17,6 +19,11 @@ def reconcile(root,board):
     try:
      state=json.loads(receipt.read_text())
      if state['state'] not in ('proposing','product_scope_review') or alive(state.get('owner')) is not False:continue
+     if mode['mode']=='once':
+      state.update(state='blocked',error='单次规划进程已中断；保留证据，等待人工核验。');save(receipt,state)
+      store=configured_store(root)
+      if store:store.selection(lane,'blocked',state['error'])
+      results.append({'job':receipt.parent.name,'state':'needs_attention','reason':state['error']});continue
      if state.get('planning_restarts',0)>=2:results.append({'job':receipt.parent.name,'state':'needs_attention','reason':'Planning restart budget exhausted'});continue
      issue=board.api('GET','/issues/'+state['issue'])
      if issue.get('projectId')!=project['id'] or issue['status']!='in_progress':continue

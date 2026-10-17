@@ -84,13 +84,18 @@ def tick(lane):
  mandate_path=ROOT/'data/autonomy-policies'/(lane+'.json')
  if not mandate_path.exists():return
  mandate=json.loads(mandate_path.read_text())
- if not mandate.get('enabled'):return
+ from loop_control import settle,view,claim,finish_without_attempt
+ mode=settle(ROOT,lane)
+ if not mode['allowed'] or mode['mode']=='paused' or mode['mode']=='once' and mode.get('attempt'):return
+ mandate={**mandate,'enabled':True}
  if mandate.get('scope_approval','product') not in ('pm','product'):raise ValueError('Unknown configured scope approval mode')
  if lane not in json.loads((ROOT/'data/control.json').read_text())['projects']:raise ValueError('Unknown project')
  global_lock=ROOT/'data/locks'/('autonomy-'+lane);global_lock.parent.mkdir(exist_ok=True)
  with global_lock.open('w') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:return
+  mode=view(ROOT,lane)
+  if mode['mode']=='paused' or mode['mode']=='once' and mode.get('attempt'):return
   s=json.loads((ROOT/'data/control.json').read_text())
   store=configured_store(ROOT)
   shared=store.context(lane) if store else None
@@ -117,7 +122,7 @@ def tick(lane):
    previous=json.loads(f.read_text())
    if previous.get('interrupted_planning'):continue
    if previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id:
-    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});return
+    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});finish_without_attempt(ROOT,lane,'该版本与需求状态已完成选题；不重复调用模型。');return
    if previous.get('fingerprint'):history.append(previous['fingerprint'])
   policy=json.loads((ROOT/'data/delivery-policies'/(lane+'.json')).read_text())
   if not set(mandate['allowed_paths'])<=set(policy['allowed_paths']):raise ValueError('Mandate exceeds configured delivery scope')
@@ -127,8 +132,15 @@ def tick(lane):
    except BlockingIOError:return
    b=Board();owner=b.api('GET','/auth/get-session')['user']['id'];company=cfg.get('company',s.get('company'))
    job=uuid.uuid4().hex;folder=ROOT/'data/autonomy'/lane/job;folder.mkdir(parents=True,mode=0o700)
+   claim(ROOT,lane,job)
    receipt={'owner':identity(),'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
-   task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / 有限自主队列：发现下一项高价值回归','status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；没有价值则休眠，不为消耗token造任务。'})
+   save(folder/'state.json',receipt)
+   try:
+    task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / 有限自主队列：发现下一项高价值回归','status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；没有价值则休眠，不为消耗token造任务。'})
+   except Exception as exc:
+    receipt.update(state='blocked',error='PM issue creation outcome needs reconciliation: '+str(exc));save(folder/'state.json',receipt)
+    if store:store.selection(lane,'blocked',receipt['error'])
+    raise
    receipt['issue']=task['id'];save(folder/'state.json',receipt)
    for prior_path in (ROOT/'data/autonomy'/lane).glob('*/state.json'):
     if prior_path.parent==folder:continue
@@ -207,4 +219,7 @@ def tick(lane):
 
 if __name__=='__main__':
  import sys
- tick(sys.argv[1])
+ try:tick(sys.argv[1])
+ finally:
+  from loop_control import settle
+  settle(ROOT,sys.argv[1])

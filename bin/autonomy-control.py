@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Operator switch for new autonomous planning; never kills active work or resets evidence."""
-import argparse,json
-from board import ROOT
-from lifecycle import save
-p=argparse.ArgumentParser();p.add_argument('action',choices=['status','pause','resume']);p.add_argument('lane');args=p.parse_args()
-if not args.lane.replace('-','').isalnum():raise ValueError('Invalid lane')
-path=ROOT/'data/autonomy-policies'/(args.lane+'.json');policy=json.loads(path.read_text())
-if args.action!='status':
- policy['enabled']=args.action=='resume';save(path,policy)
- print('New autonomous planning '+('enabled' if policy['enabled'] else 'paused')+'; active/bound tasks and historical evidence unchanged.')
-print(json.dumps(policy,ensure_ascii=False,indent=2))
+"""Operator interface to the same project-owned loop control used by the console."""
+import argparse,json,uuid
+from runtime import ROOT
+from project_state import Store
+from loop_control import view,switch
+p=argparse.ArgumentParser();p.add_argument('action',choices=['status','pause','resume','once']);p.add_argument('lane');a=p.parse_args()
+if a.action!='status':
+ store=Store(ROOT);switch(ROOT,a.lane,{'pause':'paused','resume':'continuous','once':'once'}[a.action],store.read(a.lane)['revision'],'cli-'+uuid.uuid4().hex)
+print(json.dumps(view(ROOT,a.lane),ensure_ascii=False,indent=2))

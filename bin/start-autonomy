@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 kit_root="$(cd "$(dirname "$0")/.." && pwd)"
-if tmux has-session -t paperclip-autonomy 2>/dev/null; then exit 0; fi
-tmux new-session -d -s paperclip-autonomy -c "$kit_root" 'export PATH="$HOME/.local/bin:$PATH"; exec /usr/bin/python3 bin/autonomy.py gtp >> logs/autonomy.log 2>&1'
+exec /usr/bin/python3 "$kit_root/bin/launch_loops.py"
