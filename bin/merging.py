@@ -23,7 +23,8 @@ def eligibility(folder,state,binding,policy,pr):
   run=pathlib.Path(folder)/state['acceptance']['run_id']
   result=json.loads((run/'result.md').read_text())
   if result.get('verdict')!='approved':raise GateError('Product report is not approved')
- checks=json.loads((pathlib.Path(folder)/('checks-'+str(state['round'])+'.json')).read_text())
+ checks_name='checks-'+str(state['round'])+('-resume-'+str(state['review_resume_count']) if state.get('review_resume_count') else '')+'.json'
+ checks=json.loads((pathlib.Path(folder)/checks_name).read_text())
  if [c['argv'] for c in checks]!=binding['policy']['checks'] or any(c['exit_code'] for c in checks):raise GateError('Checks missing or failed')
  if pr.get('state')!='OPEN' or pr.get('isDraft'):raise GateError('PR not open/ready')
  if pr.get('url')!=state['pr_url'] or not pr['url'].startswith('https://github.com/'+policy['github_repo']+'/pull/'):raise GateError('PR repository mismatch')

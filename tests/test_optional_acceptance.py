@@ -23,6 +23,13 @@ class OptionalAcceptance(unittest.TestCase):
 class ReviewMerge(unittest.TestCase):
  setUp=test_merging.ProductMerge.setUp
  tearDown=test_merging.ProductMerge.tearDown
+ def test_resumed_review_merge_requires_fresh_check_receipt(self):
+  self.state['review_resume_count']=1
+  with self.assertRaises(FileNotFoundError):eligibility(self.root,self.state,self.binding,self.policy,self.pr)
+  (self.root/'checks-1-resume-1.json').write_text(json.dumps([{'argv':['synthetic'],'exit_code':1}]))
+  with self.assertRaises(GateError):eligibility(self.root,self.state,self.binding,self.policy,self.pr)
+  (self.root/'checks-1-resume-1.json').write_bytes((self.root/'checks-1.json').read_bytes())
+  self.assertTrue(eligibility(self.root,self.state,self.binding,self.policy,self.pr))
  def test_review_only_merge_validates_report_and_checks(self):
   self.binding['policy']['workflow']=[{'stage':'build','role':'builder'},{'stage':'review','role':'reviewer'}];self.policy.update(mode='review_approved',review_role='reviewer');self.state['acceptance']=None
   p=self.root/'reviewer';p.mkdir();(p/'result.md').write_text('{"verdict":"approved"}')

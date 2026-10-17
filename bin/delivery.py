@@ -56,7 +56,7 @@ def check_result(text):
  from gates import verdict
  return verdict(text)
 
-def execute(packet,policy,job,emit=print,publish=True):
+def execute(packet,policy,job,emit=print,publish=True,resume_review=False):
  validate(packet,policy)
  from execution_settings import read as read_settings,route as execution_route
  execution_settings=read_settings(ROOT)
@@ -71,27 +71,68 @@ def execute(packet,policy,job,emit=print,publish=True):
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:return {'state':'queued','reason':'repository busy'}
   root=ROOT/'data/deliveries'/job;statefile=root/'state.json'
+  resumed=None
   if statefile.exists():
-   old=json.loads(statefile.read_text());emit('Existing attempt: '+old['state']+'; no replay');return old
+   old=json.loads(statefile.read_text())
+   if not resume_review:emit('Existing attempt: '+old['state']+'; no replay');return old
+   from process_owner import alive
+   candidate=root/'candidate';target=old.get('target_sha')
+   if old['state']!='blocked' or not old.get('failed_stage','').startswith('review_') or old.get('pr_url') or alive(old.get('owner')) is not False:raise GateError('Review resume requires an unpublished stopped review worker')
+   if old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output')):raise GateError('Only review output format failures can resume without Builder')
+   if old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
+   if json.loads((root/'packet.json').read_text())!=packet or json.loads((root/'policy.json').read_text())!=policy:raise GateError('Resume contract or policy changed')
+   if git(candidate,'rev-parse','HEAD').decode().strip()!=target or git(candidate,'status','--porcelain').strip():raise GateError('Resume candidate changed or dirty')
+   git(candidate,'merge-base','--is-ancestor',sha,target)
+   changed=set(git(candidate,'diff','--name-only',sha,target).decode().splitlines())
+   if not changed or not changed<=set(packet['allowed_paths']):raise GateError('Resume outside Packet scope')
+   from lifecycle import save
+   save(root/('review-resume-'+str(old.get('review_resume_count',0)+1)+'.json'),old)
+   resumed=old
+  elif resume_review:raise GateError('No failed review to resume')
   if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved; regenerate Packet')
-  root.mkdir(parents=True,mode=0o700)
+  root.mkdir(parents=True,exist_ok=bool(resumed),mode=0o700)
   from process_owner import identity
   state={'execution_settings':execution_settings,'owner':identity(),'state':'planning','risk':policy.get('risk','low'),'reviews':{},'acceptance':None,'job_id':job}
+  if resumed:
+   state.update({k:resumed[k] for k in ('round','target_sha','builder_run')})
+   state['review_resume_count']=resumed.get('review_resume_count',0)+1
   def persist(stage):
    state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error')});emit(stage)
   def role(step,workspace,prompt,metadata=None):
    task_guard(ROOT,job)
    rid=step['role']+'-'+uuid.uuid4().hex[:12]
-   result=run(workspace,root/rid,contract(registry,step['role'])+'\n'+(project_context(baseline,policy['project_adapter'],step['role'],packet['allowed_paths']) if policy.get('project_adapter') else rules)+'\n'+prompt,
-    role='builder' if step['stage']=='build' else 'readonly',provider_id=step.get('provider','codex'),timeout=policy.get('timeout'),git_metadata=metadata or candidate/'.git',dependencies=dependencies,execution_route=execution_route(execution_settings,'planning' if step['stage']=='plan' else step['stage'],step.get('provider','codex')))
+   full_prompt=contract(registry,step['role'])+'\n'+(project_context(baseline,policy['project_adapter'],step['role'],packet['allowed_paths']) if policy.get('project_adapter') else rules)+'\n'+prompt
+   kwargs={'role':'builder' if step['stage']=='build' else 'readonly','provider_id':step.get('provider','codex'),'timeout':policy.get('timeout'),'git_metadata':metadata or candidate/'.git','dependencies':dependencies,'execution_route':execution_route(execution_settings,'planning' if step['stage']=='plan' else step['stage'],step.get('provider','codex'))}
+   if step['stage']=='build':result=run(workspace,root/rid,full_prompt,**kwargs)
+   else:
+    from planning_runtime import invoke,InvalidOutput
+    def checked_run(workspace,scratch,prompt,**options):
+     text=run(workspace,scratch,prompt,**options)
+     fresh()
+     try:
+      value=check_result(text)
+      if 'findings' not in value:raise GateError('findings array required')
+      return json.dumps(value,ensure_ascii=False)
+     except (ValueError,TypeError) as exc:raise InvalidOutput('Return only one JSON object with verdict approved|changes_requested|blocked and findings array; no surrounding prose') from exc
+    def fresh():
+     task_guard(ROOT,job)
+     if git(candidate,'rev-parse','HEAD').decode().strip()!=state.get('target_sha',sha):raise GateError('Review target changed')
+     if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved during review')
+    full_prompt+='\nIf correcting output format, preserve the independently assessed verdict and findings; never change a blocker into approval to satisfy the protocol.'
+    result=json.dumps(invoke(checked_run,workspace,root/rid,full_prompt,fresh,**kwargs),ensure_ascii=False)
+    recovery=root/(rid+'-recovery.json')
+    if recovery.exists():rid+='-retry-'+str(json.loads(recovery.read_text())['attempts']-1)
    return rid,result
   try:
-   persist('planning')
+   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Review format recovery at unchanged target SHA'})
+   persist('building' if resumed else 'planning')
    (root/'packet.json').write_text(json.dumps(packet,ensure_ascii=False,indent=2))
    (root/'policy.json').write_text(json.dumps(policy,ensure_ascii=False,indent=2))
-   candidate=root/'candidate';subprocess.run(['git','clone','--quiet','--no-hardlinks',str(repo),str(candidate)],check=True)
-   branch='agent/delivery-'+job;git(candidate,'checkout','-b',branch,sha)
-   baseline=snapshot(candidate,sha,root/'baseline');registry=resolve(baseline,policy.get('project_adapter'))
+   candidate=root/'candidate';branch='agent/delivery-'+job
+   if not resumed:
+    subprocess.run(['git','clone','--quiet','--no-hardlinks',str(repo),str(candidate)],check=True)
+    git(candidate,'checkout','-b',branch,sha)
+   baseline=snapshot(candidate,sha,root/('baseline-resume-'+str(state['review_resume_count']) if resumed else 'baseline'));registry=resolve(baseline,policy.get('project_adapter'))
    if (baseline/'.agent/project.json').exists() and not policy.get('project_adapter'):raise GateError('Project manifest must be mapped into execution policy before running')
    if policy.get('role_registry') and policy['role_registry']!=fingerprints(registry):raise GateError('Project role baseline differs from configured policy')
    for name,digest in policy.get('workflow_evidence',{}).items():
@@ -113,29 +154,32 @@ def execute(packet,policy,job,emit=print,publish=True):
    context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(packet,ensure_ascii=False)+'\nThe current directory is a controller-verified baseline snapshot. Use the selected native harness and project environment. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
    plans=[]
    for step in policy['workflow']:
-    if step['stage'] in ('plan','advisory'):
+    if not resumed and step['stage'] in ('plan','advisory'):
      _,result=role(step,baseline,context+'This is PRE-IMPLEMENTATION planning/advice, not acceptance of existing baseline. Unimplemented functions or failing baseline tests are the authorized work to be done, not blockers by themselves. Mark blocked only for unresolved requirements, incompatible project rules or missing prerequisites that prevent Builder from proceeding. Read-only bounded '+step['stage']+'; identify actual unresolved blockers. Return JSON {"verdict":"approved|blocked","findings":[],"plan":"..."}.')
      if check_result(result)['verdict']!='approved':raise GateError('Planning blocked: '+result)
      plans.append(result)
    feedback='';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
-   for roundno in range(1,policy['max_rounds']+1):
-    state['round']=roundno;persist('building')
-    workspace=snapshot(candidate,git(candidate,'rev-parse','HEAD').decode().strip(),root/f'build-{roundno}')
-    before=tree(workspace)
-    rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Return only JSON {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; the controller runs the full configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
-    if check_result(build_result)['verdict']=='blocked':raise GateError('Builder blocked: '+build_result)
-    after=tree(workspace);changed={p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)}
-    if not changed or not changed<=set(packet['allowed_paths']):raise GateError('No change or outside Packet scope')
-    for name in changed:
-     dest=candidate/name;source=workspace/name
-     if source.is_file():dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
-     elif dest.exists():dest.unlink()
-    git(candidate,'add','--',*sorted(changed));git(candidate,'-c','core.hooksPath=/dev/null','-c','user.name=Agent Control','-c','user.email=agent-control@localhost','commit','-m',packet['title'])
-    target=git(candidate,'rev-parse','HEAD').decode().strip();update_target(state,target);state['builder_run']=rid
-    review=snapshot(candidate,target,root/f'review-{roundno}');persist('checking');checks=[]
+   for roundno in range(resumed['round'] if resumed else 1,policy['max_rounds']+1):
+    state['round']=roundno
+    if not resumed or roundno!=resumed['round']:
+     persist('building')
+     workspace=snapshot(candidate,git(candidate,'rev-parse','HEAD').decode().strip(),root/f'build-{roundno}')
+     before=tree(workspace)
+     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Return only JSON {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; the controller runs the full configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
+     if check_result(build_result)['verdict']=='blocked':raise GateError('Builder blocked: '+build_result)
+     after=tree(workspace);changed={p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)}
+     if not changed or not changed<=set(packet['allowed_paths']):raise GateError('No change or outside Packet scope')
+     for name in changed:
+      dest=candidate/name;source=workspace/name
+      if source.is_file():dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
+      elif dest.exists():dest.unlink()
+     git(candidate,'add','--',*sorted(changed));git(candidate,'-c','core.hooksPath=/dev/null','-c','user.name=Agent Control','-c','user.email=agent-control@localhost','commit','-m',packet['title'])
+     target=git(candidate,'rev-parse','HEAD').decode().strip();update_target(state,target);state['builder_run']=rid
+    target=state['target_sha']
+    review=snapshot(candidate,target,root/(f'review-{roundno}-resume-'+str(state['review_resume_count']) if resumed else f'review-{roundno}'));persist('checking');checks=[]
     for argv in policy['checks']:
      result=command(review,argv,dependencies=dependencies,timeout=policy.get('check_timeout'));checks.append({'argv':argv,'exit_code':result.returncode,'output':result.stdout[-24000:]})
-    (root/f'checks-{roundno}.json').write_text(json.dumps(checks,indent=2))
+    (root/(f'checks-{roundno}-resume-'+str(state['review_resume_count'])+'.json' if resumed else f'checks-{roundno}.json')).write_text(json.dumps(checks,indent=2))
     if any(c['exit_code'] for c in checks):
      if policy.get('on_check_failure')=='stop':raise GateError('Test-only check failed; preserve evidence; Product disposition required')
      feedback=json.dumps(checks);continue
@@ -169,4 +213,4 @@ def execute(packet,policy,job,emit=print,publish=True):
    raise GateError('Round limit reached; Product disposition required')
   except Exception as exc:
    from lifecycle import failure
-   state['error']=str(exc);state['failure']=failure(exc);state['failed_stage']=state['state'];persist('blocked');raise
+   state['error']=str(exc);state['failure']=({'category':'model_output','next_action':'修正输出协议后，从同一提交重新检查并独立审核','retryable':False} if isinstance(exc,__import__('planning_runtime').InvalidOutput) else failure(exc));state['failed_stage']=state['state'];persist('blocked');raise

@@ -35,6 +35,6 @@ def verdict(text):
  text=text.strip()
  if text.startswith('```'):text=re.sub(r'^```(?:json)?\s*|\s*```$','',text)
  d=json.loads(text)
- if d.get('verdict') not in ['approved','changes_requested','blocked']:raise GateError('invalid review output')
+ if not isinstance(d,dict) or d.get('verdict') not in ['approved','changes_requested','blocked'] or ('findings' in d and not isinstance(d['findings'],list)):raise GateError('invalid review output: require verdict and findings array')
  return d
 

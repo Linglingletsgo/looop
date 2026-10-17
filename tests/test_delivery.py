@@ -150,3 +150,71 @@ class Delivery(unittest.TestCase):
   self.policy['on_check_failure']='stop'
   with self.assertRaisesRegex(GateError,'Product disposition'):self.execute(check=lambda *a,**kw:subprocess.CompletedProcess([],1,'exposed regression'))
   state=json.loads((self.root/'data/deliveries/task-one/state.json').read_text());self.assertEqual(state['round'],1);self.assertEqual(state['failure']['category'],'product_disposition')
+
+ def test_review_schema_repair_does_not_rebuild_and_binds_successful_call(self):
+  calls=[]
+  def model(workspace,scratch,prompt,**kwargs):
+   calls.append((kwargs['role'],scratch.name))
+   if scratch.name.startswith('reviewer-') and '-retry-' not in scratch.name:return 'Review summary\n{"verdict":"approved","findings":[]}'
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  state=self.execute(harness=model)
+  self.assertEqual(state['state'],'validated');self.assertEqual(sum(role=='builder' for role,_ in calls),1)
+  self.assertEqual(len([n for _,n in calls if n.startswith('reviewer-')]),2)
+  self.assertEqual(state['reviews']['standard']['target_sha'],state['target_sha']);self.assertTrue(state['reviews']['standard']['run_id'].endswith('-retry-1'))
+  self.assertTrue(list((self.root/'data/deliveries/task-one').glob('reviewer-*-recovery.json')))
+ def test_real_blocker_is_not_retried_as_format_error(self):
+  count=[0]
+  def model(workspace,scratch,prompt,**kwargs):
+   if scratch.name.startswith('reviewer-'):
+    count[0]+=1;return '{"verdict":"blocked","findings":["Missing authority"]}'
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  with self.assertRaisesRegex(GateError,'Review blocked'):self.execute(harness=model)
+  self.assertEqual(count[0],1)
+ def test_failed_review_format_resumes_same_commit_with_fresh_checks_only(self):
+  def broken(workspace,scratch,prompt,**kwargs):
+   if scratch.name.startswith('reviewer-'):return 'No structured verdict'
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  with self.assertRaisesRegex(ValueError,'Return only one JSON'):self.execute(harness=broken)
+  folder=self.root/'data/deliveries/task-one';old=json.loads((folder/'state.json').read_text())
+  self.assertEqual(old['failure']['category'],'model_output');self.assertEqual(old['failed_stage'],'review_standard')
+  calls=[];checks=[]
+  def resumed(workspace,scratch,prompt,**kwargs):
+   self.assertNotEqual(kwargs['role'],'builder');self.assertFalse(scratch.name.startswith('product-'));calls.append(scratch.name)
+   return '{"verdict":"approved","findings":[]}'
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=resumed),patch.object(delivery,'command',side_effect=lambda *a,**k:checks.append(a) or subprocess.CompletedProcess([],0,'fresh pass')),patch('process_owner.alive',return_value=False):
+   result=delivery.execute(self.packet,self.policy,'task-one',emit=lambda *_:None,publish=False,resume_review=True)
+  self.assertEqual(result['state'],'validated');self.assertEqual(result['target_sha'],old['target_sha']);self.assertEqual(result['builder_run'],old['builder_run']);self.assertEqual(len(checks),1)
+  self.assertEqual(len(calls),2);self.assertTrue((folder/'review-resume-1.json').exists());self.assertTrue((folder/'checks-1.json').exists());self.assertTrue((folder/'checks-1-resume-1.json').exists())
+  self.assertNotEqual(result['reviews']['standard']['run_id'],old.get('reviews',{}).get('standard',{}).get('run_id'))
+ def test_explicit_review_resume_rejects_business_blockers_and_dirty_candidate(self):
+  def broken(workspace,scratch,prompt,**kwargs):
+   if scratch.name.startswith('reviewer-'):return 'No structured verdict'
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  with self.assertRaises(ValueError):self.execute(harness=broken)
+  folder=self.root/'data/deliveries/task-one';path=folder/'state.json';state=json.loads(path.read_text())
+  with patch.object(delivery,'ROOT',self.root),patch('process_owner.alive',return_value=False),patch.object(delivery,'run',side_effect=AssertionError('No model call before resume validation')):
+   (folder/'candidate/app.py').write_text('modified after review failure')
+   with self.assertRaisesRegex(GateError,'dirty'):delivery.execute(self.packet,self.policy,'task-one',publish=False,resume_review=True)
+   delivery.git(folder/'candidate','checkout','--','app.py')
+   state.update(error='Review blocked: missing authority',failure={'category':'product_disposition'});path.write_text(json.dumps(state))
+   with self.assertRaisesRegex(GateError,'Only review output'):delivery.execute(self.packet,self.policy,'task-one',publish=False,resume_review=True)
+
+ def test_scope_hold_during_format_failure_stops_before_correction(self):
+  calls=[0]
+  def model(workspace,scratch,prompt,**kwargs):
+   if scratch.name.startswith('reviewer-'):
+    calls[0]+=1;raise ValueError('External decision changed')
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  with self.assertRaisesRegex(ValueError,'External decision'):self.execute(harness=model)
+  self.assertEqual(calls[0],1)
+ def test_review_resume_advances_shared_project_state_without_reopening_other_tasks(self):
+  from project_state import Store
+  def model(workspace,scratch,prompt,**kwargs):
+   if scratch.name.startswith('reviewer-'):return 'Malformed output'
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  with self.assertRaises(ValueError):self.execute(harness=model)
+  store=Store(self.root);store.ensure('test');store.bind('test','task-one',self.packet);store.transition('test','task-one','blocked',import_existing=True)
+  (self.root/'data/project-state/enabled').touch();p=self.root/'data/delivery-bindings/task-one.json';p.parent.mkdir();p.write_text(json.dumps({'lane':'test','packet':self.packet}))
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',return_value='{"verdict":"approved","findings":[]}'),patch.object(delivery,'command',return_value=subprocess.CompletedProcess([],0,'fresh')),patch('process_owner.alive',return_value=False):
+   state=delivery.execute(self.packet,self.policy,'task-one',emit=lambda *_:None,publish=False,resume_review=True)
+  self.assertEqual(state['state'],'validated');self.assertEqual(store.read('test')['tasks']['task-one']['phase'],'completed')

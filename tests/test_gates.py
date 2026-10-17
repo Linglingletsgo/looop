@@ -33,3 +33,8 @@ class Gates(unittest.TestCase):
   with self.assertRaises(GateError):validate_packet({'bundle':'x'})
  def test_low_risk(self):
   s=self.state();s['risk']='low';del s['reviews']['adversarial'];require_pr(s)
+
+ def test_review_output_requires_unambiguous_object_and_findings(self):
+  for text in ('[]','null','{"verdict":"approved","findings":"none"}','Summary\n{"verdict":"approved","findings":[]}','{"verdict":"blocked","findings":[]}\n{"verdict":"approved","findings":[]}'):
+   with self.assertRaises(ValueError):verdict(text)
+  self.assertEqual(verdict('```json\n{"verdict":"blocked","findings":["Evidence missing"]}\n```')['verdict'],'blocked')
