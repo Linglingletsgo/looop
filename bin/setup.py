@@ -13,5 +13,7 @@ def main():
  elif dest.resolve()!=(root/'skills/project-adapter').resolve():raise ValueError('Another project-adapter skill is installed; inspect before replacing it')
  settings=root/'data/local-settings.json'
  if not settings.exists():settings.write_text(json.dumps({'board_url':'http://127.0.0.1:3101'},indent=2))
+ if (root/'.runtime/node_modules/@paperclipai/server').exists():
+  subprocess.run(['python3',str(root/'bin/install-ui.py')],check=True)
  print('Runtime/skill prepared. Configure local credentials and project registrations separately; no scheduling enabled.')
 if __name__=='__main__':main()
