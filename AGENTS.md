@@ -1,4 +1,4 @@
-# Agent Control
+# looop
 
 Maintain Paperclip customization, scheduling, project adapters and skills in this repository. `bin/` is the canonical implementation; skill assets and installed skill/legacy kit paths link to it. Project-local tools are exported standalone artifacts.
 
