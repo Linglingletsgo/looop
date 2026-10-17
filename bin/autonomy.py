@@ -51,7 +51,16 @@ def slots(root,lane,mandate,now=None,human=False):
   s=json.loads(f.read_text())
   if s['state'] not in ('merged','validated','closed'):return 'Existing delivery '+s['state']
   if s['state']=='merged' and not s.get('mainline_verified'):return 'Post-merge verification pending'
- for name in ('codex','commandcode'):
+ from execution_settings import read as read_settings
+ settings=read_settings(root)
+ if settings.get('revision'):
+  from execution_settings import route
+  policy_path=root/'data/delivery-policies'/(lane+'.json')
+  workflow=json.loads(policy_path.read_text()).get('workflow',[]) if policy_path.exists() else []
+  stages={'planning'}|{'planning' if s['stage']=='plan' else s['stage'] for s in workflow}
+  providers={route(settings,stage)['provider'] for stage in stages}
+ else:providers={'codex','commandcode'}
+ for name in providers:
   if paused(root,name) is not None:return 'Provider paused: '+name
  jobs=list((root/'data/autonomy'/lane).glob('*/state.json'))
  day=datetime.datetime.fromtimestamp(now,datetime.timezone.utc).strftime('%Y-%m-%d')
@@ -189,7 +198,10 @@ def tick(lane):
      if store:
       store.project_guard(lane)
       if store.read(lane)['planning_revision']!=revision:raise Conflict('External decisions changed during planning; retry cancelled')
-    value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt,fresh,role='readonly',timeout=None,provider_id='codex')
+    from execution_settings import read as read_settings,route as execution_route
+    settings=read_settings(ROOT);receipt['execution_settings']=settings;save(folder/'state.json',receipt)
+    planning_route=execution_route(settings if settings.get('revision') else None,'planning','codex')
+    value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt,fresh,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
     save(folder/'proposal.json',value);receipt['backlog_item_key']=check_source(value,mode['selection_mode'],selected,items);checked=checked_proposal(value,mandate,workspace,sha,history)
     if checked is None:
      if store:
@@ -212,7 +224,7 @@ def tick(lane):
     if mandate.get('scope_approval','product')=='product':
      receipt['state']='product_scope_review';save(folder/'state.json',receipt)
      review=context+'You are an independent Product scope approver under the user delegation above. You may approve only work within the explicit project envelope, with concrete value, source evidence, observable acceptance and no duplication. Do not expand the project envelope or approve weakening/skipping checks. Follow the project purpose and task_kind, including test-only restrictions when present. Verify PM evidence against code. Return only JSON {"verdict":"approved|rejected|blocked","findings":[],"reason":"..."}. Proposal:\n'+json.dumps(value,ensure_ascii=False)
-     verdict=invoke(run,workspace,folder/'product',contract(registry,mandate['product_role'])+'\n'+review,fresh,role='readonly',timeout=None,provider_id='codex');save(folder/'scope-review.json',verdict)
+     verdict=invoke(run,workspace,folder/'product',contract(registry,mandate['product_role'])+'\n'+review,fresh,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route);save(folder/'scope-review.json',verdict)
      if verdict.get('verdict')!='approved':
       receipt['state']='rejected' if verdict.get('verdict')=='rejected' else 'blocked';receipt['reason']=verdict.get('reason');save(folder/'state.json',receipt)
       b.api('PATCH','/issues/'+task['id'],{'status':'done' if receipt['state']=='rejected' else 'blocked','comment':'Product范围审核：'+json.dumps(verdict,ensure_ascii=False)});return

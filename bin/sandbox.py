@@ -10,7 +10,10 @@ def gateway_directory(root):
  if len(str(path/'model.sock').encode())>100:return pathlib.Path(tempfile.mkdtemp(prefix='agent-gateway-'))
  path.mkdir(parents=True,mode=0o700);return path
 
-def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None):
+def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None):
+ if execution_route:
+  if execution_route.get('harness')!='codex':raise RuntimeError('Harness adapter unavailable')
+  provider_id=execution_route['provider']
  scratch=pathlib.Path(scratch);scratch.mkdir(parents=True,exist_ok=True,mode=0o700)
  if provider_id not in ['codex','commandcode']:raise RuntimeError('Unapproved provider')
  quota=ROOT/'data'/('quota-'+provider_id+'.json')
@@ -22,6 +25,7 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
   token=provider.get('experimental_bearer_token');model=config['model'];upstream='127.0.0.1';port=8317;prefix=''
  else:
   token=(ROOT/'secrets/commandcode.key').read_text().strip();model='deepseek/deepseek-v4.1-flash';upstream='api.commandcode.ai';port=443;prefix='/provider'
+ if provider_id=='codex' and execution_route and execution_route.get('model'):model=execution_route['model']
  if not token:raise RuntimeError('Proxy credential unavailable')
  gateway_dir=gateway_directory(ROOT)
  failed=[]
@@ -113,7 +117,7 @@ experimental_bearer_token = "sandbox-placeholder"
   if failed:
    if set(failed)=={503}:raise RuntimeError('Model connection failed; inspect gateway/events')
    raise RuntimeError('Provider unavailable/quota: '+str(sorted(set(failed))))
-  usage={'provider':provider_id,'model':model,'input_tokens':0,'cached_input_tokens':0,'output_tokens':0,'remaining':'unknown'}
+  usage={'harness':'codex','provider':provider_id,'model':model,'input_tokens':0,'cached_input_tokens':0,'output_tokens':0,'remaining':'unknown'}
   for line in (scratch/'events.jsonl').read_text().splitlines():
    try:event=json.loads(line)
    except ValueError:continue

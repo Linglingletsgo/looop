@@ -28,15 +28,24 @@ def evidence(root,lane,task):
 
 def execute(value,root=ROOT):
  root=pathlib.Path(root);action=value.get('action')
+ if action=='execution_settings':
+  from execution_settings import save
+  return save(root,value,value.get('revision'),value.get('request_id'))
  if action in ('preview','connect'):
   from onboarding import preview,connect
   if action=='connect':return connect(root,value['repo'],value['fingerprint'])
   return preview(value['repo'])
  lane=valid_lane(value.get('lane'));store=Store(root)
  if lane not in json.loads((root/'data/control.json').read_text())['projects']:raise ValueError('Unknown project')
+ if action=='activation_preview':
+  from activation import preview
+  return preview(root,lane)
  if action=='evidence':return evidence(root,lane,value['task'])
  revision=value.get('revision');request=value.get('request_id')
  if not isinstance(revision,int) or isinstance(revision,bool) or not isinstance(request,str):raise ValueError('Revision and stable request id required')
+ if action=='enable_execution':
+  from activation import enable
+  return enable(root,lane,revision,request,value.get('fingerprint'))
  if action=='loop':
   result=switch(root,lane,value['mode'],revision,request)
   from launch_loops import launch

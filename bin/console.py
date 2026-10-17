@@ -35,7 +35,8 @@ def status(root=ROOT,companies=()):
  for name in ('codex','commandcode'):
   p=read(root/'data'/('quota-'+name+'.json'),None)
   providers.append({'name':name,'state':'cooldown' if p and p.get('resume_at') else 'needs_action' if p else 'available','resume_at':p.get('resume_at') if p else None,'remaining':'unknown'})
- return {'generated_at':time.time(),'projects':projects,'providers':providers}
+ from execution_settings import public
+ return {'execution_settings':public(root),'generated_at':time.time(),'projects':projects,'providers':providers}
 
 if __name__=='__main__':
  from board import Board

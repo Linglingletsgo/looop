@@ -57,6 +57,10 @@ def check_result(text):
 
 def execute(packet,policy,job,emit=print,publish=True):
  validate(packet,policy)
+ from execution_settings import read as read_settings,route as execution_route
+ execution_settings=read_settings(ROOT)
+ # No explicit owner settings yet: keep existing project provider mappings.
+ if not execution_settings.get('revision'):execution_settings=None
  task_guard(ROOT,job)
  if not re.fullmatch('[a-zA-Z0-9-]{1,80}',job):raise GateError('Invalid job id')
  repo=pathlib.Path(policy['repo']).resolve();sha=packet['baseline_sha']
@@ -71,14 +75,14 @@ def execute(packet,policy,job,emit=print,publish=True):
   if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved; regenerate Packet')
   root.mkdir(parents=True,mode=0o700)
   from process_owner import identity
-  state={'owner':identity(),'state':'planning','risk':policy.get('risk','low'),'reviews':{},'acceptance':None,'job_id':job}
+  state={'execution_settings':execution_settings,'owner':identity(),'state':'planning','risk':policy.get('risk','low'),'reviews':{},'acceptance':None,'job_id':job}
   def persist(stage):
    state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error')});emit(stage)
   def role(step,workspace,prompt,metadata=None):
    task_guard(ROOT,job)
    rid=step['role']+'-'+uuid.uuid4().hex[:12]
    result=run(workspace,root/rid,contract(registry,step['role'])+'\n'+(project_context(baseline,policy['project_adapter'],step['role'],packet['allowed_paths']) if policy.get('project_adapter') else rules)+'\n'+prompt,
-    role='builder' if step['stage']=='build' else 'readonly',provider_id=step.get('provider','codex'),timeout=policy.get('timeout'),git_metadata=metadata,dependencies=dependencies)
+    role='builder' if step['stage']=='build' else 'readonly',provider_id=step.get('provider','codex'),timeout=policy.get('timeout'),git_metadata=metadata,dependencies=dependencies,execution_route=execution_route(execution_settings,'planning' if step['stage']=='plan' else step['stage'],step.get('provider','codex')))
    return rid,result
   try:
    persist('planning')
