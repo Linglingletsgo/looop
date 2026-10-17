@@ -1,7 +1,7 @@
 import json,pathlib,sys,tempfile,unittest
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 from project_state import Store
-from retention import compact_state,trim_log
+from retention import compact_state,trim_log,maintain
 class ProjectStorage(unittest.TestCase):
  def setUp(self):self.t=tempfile.TemporaryDirectory();self.root=pathlib.Path(self.t.name)
  def tearDown(self):self.t.cleanup()
@@ -20,3 +20,13 @@ class ProjectStorage(unittest.TestCase):
   self.assertTrue(any(e['revision']==1 for e in s.events('demo')))
  def test_log_bound_preserves_inode(self):
   p=self.root/'service.log';p.write_text('line\n'*1000);inode=p.stat().st_ino;self.assertTrue(trim_log(p,100));self.assertLessEqual(p.stat().st_size,100);self.assertEqual(p.stat().st_ino,inode)
+
+ def test_maintenance_keeps_recent_backup_and_prunes_expired(self):
+  import os,time
+  backups=self.root/'data/backups';backups.mkdir(parents=True)
+  for index in range(4):
+   folder=backups/str(index);folder.mkdir();(folder/'copy').write_text('backup')
+   modified=time.time()-(30-index)*86400;os.utime(folder,(modified,modified))
+  report=maintain(self.root)
+  self.assertEqual(len(list(backups.iterdir())),3)
+  self.assertTrue((self.root/'data/retention-status.json').exists())
