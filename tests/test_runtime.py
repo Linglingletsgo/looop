@@ -65,3 +65,15 @@ class Runtime(unittest.TestCase):
   for method,provider,expected in [('claude.ai','firstParty',True),('api_key','firstParty',False),('oauth_token','firstParty',True),('claude.ai','bedrock',False)]:
    with patch.object(sandbox.shutil,'which',return_value='/cli'),patch.object(sandbox.subprocess,'check_output',return_value=json.dumps({'loggedIn':True,'authMethod':method,'apiProvider':provider})):
     self.assertEqual(sandbox.claude_subscription(),expected)
+
+ def test_browser_environment_shared_by_checks_and_harnesses(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);browser=root/'data/browsers/chromium-fixture/chrome-linux64/chrome';browser.parent.mkdir(parents=True);browser.write_text('fixture')
+   with patch.object(sandbox,'ROOT',root),patch.dict(os.environ,{},clear=True):
+    self.assertEqual(sandbox.execution_environment()['CHROMIUM_PATH'],str(browser))
+    check=command(root,['/usr/bin/python3','-c',"import os;print(os.environ['CHROMIUM_PATH'])"])
+    self.assertEqual(check.returncode,0,check.stdout);self.assertEqual(check.stdout.strip(),str(browser))
+    with patch.object(sandbox,'claude_subscription',return_value=True),patch.object(sandbox.shutil,'which',return_value='/cli'):
+     _,env,_=sandbox.invocation(root,root,{'harness':'claude','provider':'claude_subscription'})
+     self.assertEqual(env['CHROMIUM_PATH'],str(browser))
+   with patch.object(sandbox,'ROOT',root),patch.dict(os.environ,{'CHROMIUM_PATH':'/project/browser'}):self.assertEqual(sandbox.execution_environment()['CHROMIUM_PATH'],'/project/browser')

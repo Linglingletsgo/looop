@@ -7,6 +7,14 @@ HARNESS_IDS=('codex','claude','omp')
 COMPATIBILITY={'codex':('codex','commandcode'),'omp':('codex','commandcode'),'claude':('claude_subscription',)}
 FLASH='deepseek/deepseek-v4.1-flash'
 
+def execution_environment():
+ """Native jobs and controller checks share installed Linux runtime discovery."""
+ env=os.environ.copy();env['PATH']=str(pathlib.Path.home()/'.local/bin')+':'+env.get('PATH','/usr/bin:/bin')
+ if not env.get('CHROMIUM_PATH'):
+  browsers=sorted((ROOT/'data/browsers').glob('chromium-*/chrome-linux*/chrome'))
+  if browsers:env['CHROMIUM_PATH']=str(browsers[-1].resolve())
+ return env
+
 def claude_subscription():
  if not shutil.which('claude'):return False
  env=os.environ.copy()
@@ -44,7 +52,7 @@ def invocation(workspace,scratch,execution_route):
  harness=execution_route.get('harness','codex');provider=execution_route['provider']
  if harness not in COMPATIBILITY or provider not in COMPATIBILITY[harness]:raise ValueError('Unsupported Harness / Token Plan combination')
  if not shutil.which(harness):raise RuntimeError('Harness not installed: '+harness)
- env=os.environ.copy();env['PATH']=str(pathlib.Path.home()/'.local/bin')+':'+env.get('PATH','/usr/bin:/bin')
+ env=execution_environment()
  # Unattended jobs use only the selected subscription, never ambient paid API keys.
  for key in list(env):
   if key.endswith('_API_KEY') or key in ('ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','OPENAI_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'):env.pop(key,None)
