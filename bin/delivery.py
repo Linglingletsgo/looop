@@ -23,7 +23,7 @@ def validate(packet,policy):
  if not policy.get('checks'):raise GateError('Explicit checks required')
  if any(s.get('provider','codex') not in ('codex','commandcode') for s in policy.get('workflow',[])):raise GateError('Unapproved provider')
  for argv in policy['checks']:
-  if not isinstance(argv,list) or not argv or argv[0] not in ('python3','node','npm'):raise GateError('Unsupported check executable')
+  if not isinstance(argv,list) or not argv or not all(isinstance(x,str) and x for x in argv):raise GateError('Unsupported check executable')
  if not 1<=len(packet['allowed_paths'])<=20:raise GateError('Invalid write scope')
  for name in packet['allowed_paths']:
   p=pathlib.PurePosixPath(name)
@@ -47,6 +47,7 @@ def validate(packet,policy):
 def tree(root):
  result={}
  for p in pathlib.Path(root).rglob('*'):
+  if set(p.relative_to(root).parts)&{'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}:continue
   if p.is_symlink():raise GateError('Symlink output refused')
   if p.is_file():result[str(p.relative_to(root))]=hashlib.sha256(p.read_bytes()).hexdigest()
  return result
@@ -82,7 +83,7 @@ def execute(packet,policy,job,emit=print,publish=True):
    task_guard(ROOT,job)
    rid=step['role']+'-'+uuid.uuid4().hex[:12]
    result=run(workspace,root/rid,contract(registry,step['role'])+'\n'+(project_context(baseline,policy['project_adapter'],step['role'],packet['allowed_paths']) if policy.get('project_adapter') else rules)+'\n'+prompt,
-    role='builder' if step['stage']=='build' else 'readonly',provider_id=step.get('provider','codex'),timeout=policy.get('timeout'),git_metadata=metadata,dependencies=dependencies,execution_route=execution_route(execution_settings,'planning' if step['stage']=='plan' else step['stage'],step.get('provider','codex')))
+    role='builder' if step['stage']=='build' else 'readonly',provider_id=step.get('provider','codex'),timeout=policy.get('timeout'),git_metadata=metadata or candidate/'.git',dependencies=dependencies,execution_route=execution_route(execution_settings,'planning' if step['stage']=='plan' else step['stage'],step.get('provider','codex')))
    return rid,result
   try:
    persist('planning')
@@ -108,8 +109,8 @@ def execute(packet,policy,job,emit=print,publish=True):
    (root/'roles.json').write_text(json.dumps(fingerprints(registry),ensure_ascii=False,indent=2))
    rules='\n'.join('PROJECT RULES '+n+'\n'+(baseline/n).read_text() for n in dict.fromkeys(['AGENTS.md','AGENT.md','Agent.md','agents.md','docs/project/single-developer-workflow.md','docs/project/agent-os-convergence-policy.md',*policy.get('workflow_evidence',{})]) if (baseline/n).is_file())
    dependencies=pathlib.Path(policy['dependencies']) if policy.get('dependencies') else None
-   context='Use the existing project environment and exact configured checks; do not install dependencies. Node/npm are available when dependencies are mounted. Read targeted source ranges before implementing. Controller checks: '+json.dumps(policy['checks'])+'\n'
-   context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(packet,ensure_ascii=False)+'\nSource /workspace is a controller-verified baseline snapshot. No host credentials/network. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
+   context='Use the existing project environment and exact configured checks; do not install dependencies. Installed host tools and linked project dependencies are available. Read targeted source ranges before implementing. Controller checks: '+json.dumps(policy['checks'])+'\n'
+   context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(packet,ensure_ascii=False)+'\nThe current directory is a controller-verified baseline snapshot. Use the selected native harness and project environment. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
    plans=[]
    for step in policy['workflow']:
     if step['stage'] in ('plan','advisory'):
@@ -142,7 +143,7 @@ def execute(packet,policy,job,emit=print,publish=True):
     for step in policy['workflow']:
      if step['stage']!='review':continue
      mode=step.get('mode','standard');persist('review_'+mode)
-     rr,text=role(step,review,context+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. Read-only git metadata is available. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
+     rr,text=role(step,review,context+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. A private copy of candidate Git metadata is available. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
      v=check_result(text);state['reviews'][mode]={**v,'mode':mode,'run_id':rr,'target_sha':target}
      if v['verdict']=='blocked':raise GateError('Review blocked: '+text)
      if v['verdict']!='approved':feedback=text;failed=True;break

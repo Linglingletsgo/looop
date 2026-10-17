@@ -76,7 +76,7 @@ class Selection(unittest.TestCase):
   self.assertEqual(inherited_mandate(inherited_policy(self.repo))['backlog_paths'],['spec.py'])
   adapter['execution_enabled']=False;(self.repo/'.agent/project.json').write_text(json.dumps(adapter))
   with self.assertRaisesRegex(ValueError,'观察'):inherited_policy(self.repo)
- def test_actual_npm_script_in_linux_namespace(self):
+ def test_actual_npm_script_in_host_environment(self):
   from executor import command
-  (self.repo/'node_modules').mkdir();(self.repo/'package.json').write_text(json.dumps({'scripts':{'test':'node -e "if(process.env.HOME!==\'/tmp\')process.exit(2);console.log(\'fixture passed\')"'}}))
+  (self.repo/'node_modules').mkdir();(self.repo/'package.json').write_text(json.dumps({'scripts':{'test':'node -e "if(!process.env.HOME.startsWith(\'/home/\'))process.exit(2);console.log(\'fixture passed\')"'}}))
   result=command(self.repo,['npm','run','test'],dependencies=self.repo/'node_modules');self.assertEqual(result.returncode,0,result.stdout);self.assertIn('fixture passed',result.stdout)

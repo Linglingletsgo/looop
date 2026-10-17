@@ -31,8 +31,11 @@ def status(root=ROOT,companies=()):
   works=[{'id':w['id'],'status':w['status'],'summary':w['summary'],'updated_at':w.get('updated_at'),'verification':'self_reported'} for w in list(doc.get('external_work',{}).values())[-3:]]
   # Return a narrow projection, never configs, role prompts, raw logs or credentials.
   projects.append({'id':lane,'name':{'gtp':'Goal to People','mainline':'WOS 主线'}.get(lane,cfg.get('name',lane)),'company':cfg.get('company',config.get('company')),'paperclip_id':cfg.get('id'),'company_prefix':prefixes.get(cfg.get('company',config.get('company'))),'mode':mode,'loop':loop,'test':test,'phase':phase,'label':LABELS.get(phase,phase),'next_action':doc['next_action'],'revision':doc['revision'],'updated_at':doc.get('updated_at'),'workflow':workflow,'tasks':recent,'active_count':len(active),'attention':attention[:10],'independent_work':works,'intents':[{'id':i['id'],'kind':i['kind'],'title':i['title'],'body':i['body'][:4000],'status':i['status'],'priority':i['priority']} for i in intents[-5:]]})
+ from execution_settings import read as read_settings
+ selected=set(read_settings(root).get('routes',{}).values())
  providers=[]
- for name in ('codex','commandcode'):
+ for name in ('codex','commandcode','claude_subscription'):
+  if name=='claude_subscription' and name not in selected and not (root/'data'/('quota-'+name+'.json')).exists():continue
   p=read(root/'data'/('quota-'+name+'.json'),None)
   providers.append({'name':name,'state':'cooldown' if p and p.get('resume_at') else 'needs_action' if p else 'available','resume_at':p.get('resume_at') if p else None,'remaining':'unknown'})
  from execution_settings import public

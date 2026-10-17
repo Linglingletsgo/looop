@@ -23,6 +23,19 @@ class Settings(unittest.TestCase):
   self.assertEqual(settings.route(None,'build','commandcode')['provider'],'commandcode')
   self.assertEqual(settings.route(self.command(),'review')['model'],'gpt-test')
 
+ def test_per_stage_harness_snapshot_and_incompatible_pair(self):
+  command=self.command();command['stage_harnesses']={'build':'omp'}
+  settings.save(self.root,command,0,'omp');self.assertEqual(settings.route(settings.read(self.root),'build')['harness'],'omp');self.assertEqual(settings.route(settings.read(self.root),'review')['harness'],'codex')
+  without={k:v for k,v in command.items() if k!='stage_harnesses'}
+  with self.assertRaises(Conflict):settings.save(self.root,without,0,'omp')
+  command['stage_harnesses']['review']='claude'
+  with self.assertRaisesRegex(ValueError,'不兼容'):settings.save(self.root,command,1,'bad')
+ def test_claude_subscription_login_required(self):
+  command=self.command();command['stage_harnesses']={'review':'claude'};command['routes']['review']='claude_subscription'
+  with patch.object(settings,'claude_subscription',return_value=False):
+   with self.assertRaisesRegex(ValueError,'auth login'):settings.save(self.root,command,0,'no-login')
+  with patch.object(settings,'claude_subscription',return_value=True):settings.save(self.root,command,0,'login')
+
 class DeliveryRoutes(unittest.TestCase):
  setUp=test_delivery.Delivery.setUp
  tearDown=test_delivery.Delivery.tearDown

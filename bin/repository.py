@@ -15,3 +15,13 @@ def snapshot(repo,sha,dest):
    target=dest/member.name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(t.extractfile(member).read());target.chmod(0o755 if member.mode & 0o111 else 0o644)
  return dest
 
+def source_fingerprint(root):
+ """Runtime outputs are not source; existing source changes still invalidate review."""
+ import hashlib
+ result={}
+ for p in pathlib.Path(root).rglob('*'):
+  relative=p.relative_to(root)
+  if set(relative.parts)&{'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}:continue
+  if p.is_symlink():result[str(relative)]='link:'+str(p.readlink())
+  elif p.is_file():result[str(relative)]=hashlib.sha256(p.read_bytes()).hexdigest()
+ return result

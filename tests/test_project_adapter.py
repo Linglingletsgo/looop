@@ -54,12 +54,6 @@ class Adapter(unittest.TestCase):
   hashes=evidence(self.repo,self.adapter);self.assertIn('web/AGENTS.md',hashes);self.assertIn('AGENTS.md',hashes)
   (self.repo/'web/AGENTS.md').write_text('Changed web constraint')
   self.assertNotEqual(hashes['web/AGENTS.md'],evidence(self.repo,self.adapter)['web/AGENTS.md'])
- def test_gateway_supports_long_runtime_path(self):
-  from sandbox import gateway_directory
-  directory=gateway_directory(self.root/('a'*120))
-  try:self.assertLess(len(str(directory/'model.sock').encode()),108);self.assertEqual(directory.stat().st_mode&0o777,0o700)
-  finally:directory.rmdir()
-
  def test_workflow_rules_only_in_coordinator_context(self):
   a=copy.deepcopy(self.adapter);a['rules']['by_role']={'product':['history.md']}
   self.assertNotIn('Historical handoff',context(self.repo,a,'builder',['web/app.py']))

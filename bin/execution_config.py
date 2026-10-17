@@ -18,7 +18,7 @@ def inherited_policy(repo):
  checks=adapter.get('checks',[])
  if not checks:raise ValueError('适配层缺少项目检查命令。')
  for argv in checks:
-  if not isinstance(argv,list) or not argv or argv[0] not in ('node','python3','npm'):raise ValueError('当前执行环境尚不支持此检查命令；请适配运行环境：'+str(argv))
+  if not isinstance(argv,list) or not argv or not all(isinstance(x,str) and x for x in argv):raise ValueError('当前执行环境尚不支持此检查命令；请适配运行环境：'+str(argv))
   if not shutil.which(argv[0]):raise ValueError('缺少运行工具：'+argv[0])
  origin=git(repo,'remote','get-url','origin').decode().strip()
  match=re.fullmatch(r'(?:git@github.com:|https://github.com/)([\w.-]+/[\w.-]+?)(?:\.git)?',origin)

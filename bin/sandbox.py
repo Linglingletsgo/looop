@@ -1,132 +1,156 @@
-"""Restricted local Codex launcher. No host HOME, API credentials, or host network."""
-import contextlib,http.client,http.server,json,os,pathlib,socketserver,subprocess,threading,tomllib,uuid,tempfile
-from runtime import ROOT,CODE_ROOT
+"""Compatibility entry point: native harness processes, not a model/tool runtime."""
+import contextlib,json,os,pathlib,re,shutil,signal,subprocess,threading,tomllib
+from runtime import ROOT
 from provider_state import pause,paused
-class Gateway(socketserver.ThreadingUnixStreamServer):daemon_threads=True
 
-def gateway_directory(root):
- path=pathlib.Path(root)/'data/gateways'/uuid.uuid4().hex[:12]
- # Linux AF_UNIX paths are limited to 107 bytes; runtime roots may be much longer.
- if len(str(path/'model.sock').encode())>100:return pathlib.Path(tempfile.mkdtemp(prefix='agent-gateway-'))
- path.mkdir(parents=True,mode=0o700);return path
+HARNESS_IDS=('codex','claude','omp')
+COMPATIBILITY={'codex':('codex','commandcode'),'omp':('codex','commandcode'),'claude':('claude_subscription',)}
+FLASH='deepseek/deepseek-v4.1-flash'
+
+def claude_subscription():
+ if not shutil.which('claude'):return False
+ env=os.environ.copy()
+ for k in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL'):env.pop(k,None)
+ try:
+  value=json.loads(subprocess.check_output(['claude','auth','status','--json'],env=env,text=True,stderr=subprocess.DEVNULL,timeout=15))
+  return value.get('loggedIn') is True and value.get('authMethod') in ('oauth_token','oauth','claude.ai') and value.get('apiProvider')=='firstParty'
+ except (OSError,ValueError,subprocess.SubprocessError):return False
+
+@contextlib.contextmanager
+def workspace_environment(workspace,dependencies=None,git_metadata=None):
+ """Temporary runtime links are removed before scheduler fingerprints the source."""
+ workspace=pathlib.Path(workspace).resolve();created=[]
+ try:
+  pairs=[]
+  if dependencies:
+   source=pathlib.Path(dependencies).resolve();pairs.append((workspace/'node_modules',source))
+   if (source.parent/'web/node_modules').is_dir():pairs.append((workspace/'web/node_modules',source.parent/'web/node_modules'))
+  for dest,source in pairs:
+   if dest.resolve()==source.resolve():continue
+   if dest.is_dir() and not dest.is_symlink() and not any(dest.iterdir()):dest.rmdir()
+   if not dest.exists() and not dest.is_symlink():
+    dest.parent.mkdir(parents=True,exist_ok=True);dest.symlink_to(source,target_is_directory=True);created.append(dest)
+  if git_metadata and not (workspace/'.git').exists():
+   # Copy metadata: native git must never mutate the controller's candidate repository.
+   dest=workspace/'.git';shutil.copytree(git_metadata,dest);created.append(dest)
+   subprocess.run(['git','config','--local','core.worktree',str(workspace)],cwd=workspace,check=True,stdout=subprocess.DEVNULL)
+  yield
+ finally:
+  for p in reversed(created):
+   if p.is_symlink():p.unlink()
+   elif p.is_dir():shutil.rmtree(p)
+
+def invocation(workspace,scratch,execution_route):
+ harness=execution_route.get('harness','codex');provider=execution_route['provider']
+ if harness not in COMPATIBILITY or provider not in COMPATIBILITY[harness]:raise ValueError('Unsupported Harness / Token Plan combination')
+ if not shutil.which(harness):raise RuntimeError('Harness not installed: '+harness)
+ env=os.environ.copy();env['PATH']=str(pathlib.Path.home()/'.local/bin')+':'+env.get('PATH','/usr/bin:/bin')
+ # Unattended jobs use only the selected subscription, never ambient paid API keys.
+ for key in list(env):
+  if key.endswith('_API_KEY') or key in ('ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','OPENAI_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'):env.pop(key,None)
+ if provider=='claude_subscription':
+  if not claude_subscription():raise RuntimeError('Claude Code subscription login required: claude auth login')
+  model=execution_route.get('model')
+  cmd=['claude','-p','--output-format','json','--no-session-persistence','--dangerously-skip-permissions','--permission-prompts','none']
+  if model:cmd+=['--model',model]
+  return cmd,env,model
+ if provider=='codex':
+  config=tomllib.loads((pathlib.Path.home()/'.codex/config.toml').read_text());p=config['model_providers'][config['model_provider']]
+  if p.get('base_url')!='http://127.0.0.1:8317/v1':raise RuntimeError('Configure existing CLIProxyAPI subscription route first')
+  token=p.get('experimental_bearer_token');base=p['base_url'];model=execution_route.get('model') or config['model']
+ else:
+  token=(ROOT/'secrets/commandcode.key').read_text().strip();base='https://api.commandcode.ai/provider/v1';model=FLASH
+ if not token:raise RuntimeError('Subscription credential unavailable')
+ env['LOOOP_PROVIDER_KEY']=token
+ if harness=='codex':
+  cmd=['codex','exec','--skip-git-repo-check','--ephemeral','--dangerously-bypass-approvals-and-sandbox','--json','-C',str(workspace),'-m',model,'-c','model_provider="looop-subscription"','-c','model_providers.looop-subscription='+json.dumps({'name':'Selected subscription','base_url':base,'wire_api':'responses','env_key':'LOOOP_PROVIDER_KEY'}).replace(': ', ' = '),'-o',str(scratch/'result.md'),'-']
+ else:
+  # Harness-owned profile keeps other user providers/hooks from selecting paid fallbacks.
+  registry={'providers':{provider:{'baseUrl':base,'apiKey':'LOOOP_PROVIDER_KEY','api':'openai-responses','auth':'apiKey','authHeader':True,'models':[{'id':model,'name':model,'reasoning':False,'input':['text'],'contextWindow':128000,'maxTokens':16384}]}}}
+  # Per-run model file avoids configuration races between concurrent model choices.
+  profile=scratch/'omp-profile';profile.mkdir(mode=0o700,exist_ok=True);(profile/'models.yml').write_text(json.dumps(registry))
+  env['PI_CODING_AGENT_DIR']=str(profile);selected=provider+'/'+model
+  cmd=['omp','-p','--mode','json','--no-session','--no-title','--no-prewalk','--model',selected,'--smol',selected,'--slow',selected,'--plan',selected,'--approval-mode','yolo']
+ return cmd,env,model
+
+def final_text(harness,events):
+ result='';usage={'input_tokens':0,'cached_input_tokens':0,'output_tokens':0}
+ for line in events.splitlines():
+  try:e=json.loads(line)
+  except ValueError:continue
+  if not isinstance(e,dict):continue
+  if harness=='claude' and e.get('type')=='result':
+   if e.get('is_error'):raise RuntimeError('Claude Code failed; inspect owner-only events.jsonl')
+   result=e.get('result','');u=e.get('usage',{});usage.update({k:u.get(k,0) for k in usage})
+  if e.get('type')=='turn.completed':
+   for k in usage:usage[k]+=e.get('usage',{}).get(k,0)
+  if harness=='omp' and e.get('type')=='message_end':
+   message=e.get('message',{})
+   if message.get('role')=='assistant':
+    if message.get('stopReason')=='error':raise RuntimeError('OMP failed; inspect owner-only events.jsonl')
+    texts=[b.get('text','') for b in message.get('content',[]) if b.get('type')=='text'];result=''.join(texts)
+    u=message.get('usage',{})
+    for target,source in [('input_tokens','input'),('output_tokens','output'),('cached_input_tokens','cacheRead')]:usage[target]+=u.get(source,0)
+ return result,usage
 
 def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None):
- if execution_route:
-  if execution_route.get('harness')!='codex':raise RuntimeError('Harness adapter unavailable')
-  provider_id=execution_route['provider']
- scratch=pathlib.Path(scratch);scratch.mkdir(parents=True,exist_ok=True,mode=0o700)
- if provider_id not in ['codex','commandcode']:raise RuntimeError('Unapproved provider')
- quota=ROOT/'data'/('quota-'+provider_id+'.json')
- if paused(ROOT,provider_id) is not None:raise RuntimeError('Provider unavailable/quota: paused; operator resume required')
- if provider_id=='codex':
-  config=tomllib.loads((pathlib.Path.home()/'.codex/config.toml').read_text())
-  provider=config['model_providers'][config['model_provider']]
-  if provider.get('base_url')!='http://127.0.0.1:8317/v1':raise RuntimeError('Unapproved provider route')
-  token=provider.get('experimental_bearer_token');model=config['model'];upstream='127.0.0.1';port=8317;prefix=''
- else:
-  token=(ROOT/'secrets/commandcode.key').read_text().strip();model='deepseek/deepseek-v4.1-flash';upstream='api.commandcode.ai';port=443;prefix='/provider'
- if provider_id=='codex' and execution_route and execution_route.get('model'):model=execution_route['model']
- if not token:raise RuntimeError('Proxy credential unavailable')
- gateway_dir=gateway_directory(ROOT)
- failed=[]
- requests=[0]
- request_lock=threading.Lock()
- class Handler(http.server.BaseHTTPRequestHandler):
-  def log_message(self,*args):pass
-  def do_GET(self):self.forward()
-  def do_POST(self):self.forward()
-  def forward(self):
-   if self.path not in ['/v1/responses','/v1/models']:
-    self.send_error(403);return
-   with request_lock:
-    requests[0]+=1
-    if failed or requests[0]>80:
-     self.send_error(429);return
-   n=int(self.headers.get('Content-Length','0'))
-   if n>8*1024*1024:self.send_error(413);return
-   body=self.rfile.read(n)
-   if body:
-    try:
-     d=json.loads(body)
-     if d.get('model')!=model:self.send_error(403);return
-    except ValueError:self.send_error(400);return
-   conn=(http.client.HTTPSConnection if port==443 else http.client.HTTPConnection)(upstream,port,timeout=180)
-   try:
-    conn.request(self.command,prefix+self.path,body or None,{'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':self.headers.get('Accept','application/json'),'User-Agent':'CommandCode/1.0'})
-    r=conn.getresponse()
-    if r.status in (401,402,403,429):
-     failed.append(r.status);pause(ROOT,provider_id,r.status,r.getheader('Retry-After'))
-    self.send_response(r.status)
-    self.send_header('Content-Type',r.getheader('Content-Type','application/json'));self.send_header('Connection','close');self.end_headers()
-    while block:=r.read1(65536):self.wfile.write(block);self.wfile.flush()
-   except (OSError,TimeoutError):
-    failed.append(503)
-   finally:conn.close()
- server=Gateway(str(gateway_dir/'model.sock'),Handler)
- thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
- home=scratch/'home';home.mkdir(exist_ok=True)
- (home/'.codex').mkdir(exist_ok=True)
- # No copied auth, plugins, skills, MCP servers, or global project permissions.
- (home/'.codex/config.toml').write_text(f'''model = {json.dumps(model)}
-model_provider = "bounded-proxy"
-model_reasoning_effort = "medium"
-approval_policy = "never"
-web_search = "disabled"
-[features]
-unified_exec = false
-[model_providers.bounded-proxy]
-name = "Existing subscription proxy only"
-base_url = "http://127.0.0.1:8317/v1"
-wire_api = "responses"
-experimental_bearer_token = "sandbox-placeholder"
-''')
+ scratch=pathlib.Path(scratch).resolve();scratch.mkdir(parents=True,exist_ok=True,mode=0o700);scratch.chmod(0o700)
+ route=execution_route or {'harness':'codex','provider':provider_id};provider=route['provider'];harness=route.get('harness','codex')
+ if paused(ROOT,provider) is not None:raise RuntimeError('Provider unavailable/quota: paused; operator resume required')
+ from repository import source_fingerprint
+ before=source_fingerprint(workspace) if role!='builder' else None
+ cmd,env,model=invocation(pathlib.Path(workspace).resolve(),scratch,route)
+ if app_socket:raise RuntimeError('Source-free acceptance transport requires a project execution adapter')
+ readonly='This role is read-only. Do not modify project files. ' if role!='builder' else ''
+ prompt=readonly+'Execute in the current project directory using this harness and installed project tools. Do not access scheduler credentials or other projects. No model/provider switching or paid external tools.\n'+prompt
  (scratch/'prompt.txt').write_text(prompt)
- codex=str((pathlib.Path.home()/'.local/bin/codex').resolve())
- cmd=['bwrap','--unshare-all','--die-with-parent','--new-session','--clearenv','--ro-bind','/usr','/usr','--ro-bind','/bin','/bin','--ro-bind','/lib','/lib','--ro-bind','/lib64','/lib64','--proc','/proc','--dev','/dev','--tmpfs','/tmp','--dir','/etc','--dir','/tools','--ro-bind','/etc/ssl','/etc/ssl','--ro-bind',str(pathlib.Path(codex).parent),'/opt','--ro-bind',str(CODE_ROOT/'bin/sandbox_http.py'),'/relay.py','--ro-bind',str(gateway_dir),'/gateway', '--bind' if role=='builder' else '--ro-bind',str(pathlib.Path(workspace).resolve()),'/workspace','--bind',str(scratch.resolve()),'/scratch','--setenv','SHELL','/bin/bash','--setenv','USER','worker','--setenv','PYTHONDONTWRITEBYTECODE','1','--setenv','HOME','/scratch/home','--setenv','CODEX_HOME','/scratch/home/.codex','--setenv','PATH','/opt:/bin:/usr/bin','--chdir','/workspace','/bin/bash','-c','python3 /relay.py & relay=$!; trap "kill $relay 2>/dev/null || true" EXIT; codex exec --skip-git-repo-check --ephemeral --dangerously-bypass-approvals-and-sandbox --json -o /scratch/result.md - < /scratch/prompt.txt']
- rg=(pathlib.Path.home()/'.local/bin/rg').resolve()
- if rg.exists():
-  idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str(rg),'/tools/rg','--setenv','PATH','/opt:/tools:/bin:/usr/bin']
- if git_metadata:
-  (pathlib.Path(workspace)/'.git').mkdir(exist_ok=True)
-  idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str(pathlib.Path(git_metadata).resolve()),'/workspace/.git','--setenv','GIT_OPTIONAL_LOCKS','0']
- if dependencies:
-  (pathlib.Path(workspace)/'node_modules').mkdir(exist_ok=True)
-  idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str(pathlib.Path(dependencies).resolve()),'/workspace/node_modules']
-  node=(pathlib.Path.home()/'.local/bin/node').resolve()
-  cmd[idx:idx]=['--ro-bind',str(node),'/tools/node']
- if dependencies:
-  from package_tools import mount_npm
-  mount_npm(cmd,agent=True)
- if dependencies and (pathlib.Path(dependencies).parent/'web/node_modules').is_dir():
-  (pathlib.Path(workspace)/'web/node_modules').mkdir(parents=True,exist_ok=True)
-  idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str((pathlib.Path(dependencies).parent/'web/node_modules').resolve()),'/workspace/web/node_modules']
- browser_root=ROOT/'data/browsers'
- browsers=list(browser_root.glob('chromium-*/chrome-linux*/chrome'))
- if browsers:
-  idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str(browser_root),'/browsers','--setenv','CHROMIUM_PATH','/browsers/'+str(browsers[0].relative_to(browser_root))]
-  if pathlib.Path('/etc/fonts').exists():cmd[idx:idx]=['--ro-bind','/etc/fonts','/etc/fonts']
- if app_socket:
-  idx=cmd.index('--chdir');cmd[idx:idx]=['--ro-bind',str(app_socket),'/app.sock']
- # The bypass is confined to the externally isolated namespace above.
- try:
-  with (scratch/'events.jsonl').open('w') as log:
-   proc=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,timeout=timeout or None,env={'PATH':'/usr/bin:/bin'})
-  result_path=scratch/'result.md'
-  if result_path.is_symlink():raise RuntimeError('Refusing symlink result artifact')
-  result=result_path.read_text() if result_path.is_file() else ''
-  if failed:
-   if set(failed)=={503}:raise RuntimeError('Model connection failed; inspect gateway/events')
-   raise RuntimeError('Provider unavailable/quota: '+str(sorted(set(failed))))
-  usage={'harness':'codex','provider':provider_id,'model':model,'input_tokens':0,'cached_input_tokens':0,'output_tokens':0,'remaining':'unknown'}
-  for line in (scratch/'events.jsonl').read_text().splitlines():
-   try:event=json.loads(line)
-   except ValueError:continue
-   if event.get('type')=='turn.completed':
-    for key in ['input_tokens','cached_input_tokens','output_tokens']:usage[key]+=event.get('usage',{}).get(key,0)
-  (scratch/'usage.json').write_text(json.dumps(usage,indent=2))
-  if proc.returncode or not result:raise RuntimeError('Harness failed; inspect owner-only events.jsonl')
-  return result
- finally:
-  server.shutdown();server.server_close()
-  with contextlib.suppress(FileNotFoundError):(gateway_dir/'model.sock').unlink()
-  gateway_dir.rmdir()
+ logpath=scratch/'events.jsonl';tail=bytearray();thread_error=[]
+ with workspace_environment(workspace,dependencies,git_metadata):
+  proc=subprocess.Popen(cmd,cwd=workspace,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
+  def drain():
+   try:
+    with logpath.open('wb') as log:
+     while block:=proc.stdout.read1(65536):
+      tail.extend(block)
+      if len(tail)>4*1024*1024:del tail[:-4*1024*1024]
+      if log.tell()+len(block)>4*1024*1024:log.seek(0);log.truncate();log.write(tail)
+      else:log.write(block)
+      log.flush()
+   except Exception as exc:thread_error.append(exc)
+  reader=threading.Thread(target=drain,daemon=True);reader.start()
+  try:
+   proc.stdin.write(prompt.encode());proc.stdin.close();proc.wait(timeout=timeout or None)
+  except BaseException:
+   with contextlib.suppress(ProcessLookupError):os.killpg(proc.pid,signal.SIGTERM)
+   try:proc.wait(timeout=5)
+   except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
+   raise
+  finally:
+   reader.join(timeout=10)
+   if reader.is_alive():
+    with contextlib.suppress(ProcessLookupError):os.killpg(proc.pid,signal.SIGTERM)
+    reader.join(timeout=5)
+   if not reader.is_alive():proc.stdout.close()
+   else:thread_error.append(RuntimeError('Harness left its output stream open'))
+ if before is not None and source_fingerprint(workspace)!=before:raise RuntimeError('Read-only Harness modified source; result rejected')
+ if thread_error:raise RuntimeError('Harness log collection failed')
+ events=tail.decode(errors='replace')
+ status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+)(401|402|403|429)\b',events,re.I)
+ try:result,usage=final_text(harness,events)
+ except RuntimeError:
+  if status:
+   pause(ROOT,provider,int(status[1]),None);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
+  raise
+ if harness=='codex':
+  path=scratch/'result.md'
+  if path.is_symlink():raise RuntimeError('Refusing symlink result artifact')
+  result=path.read_text() if path.is_file() else ''
+ else:(scratch/'result.md').write_text(result)
+ (scratch/'usage.json').write_text(json.dumps({'harness':harness,'provider':provider,'model':model,**usage,'remaining':'unknown'},indent=2))
+ if proc.returncode or not result:
+  # CLI formats differ; only explicit HTTP status evidence pauses a provider.
+  status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+)(401|402|403|429)\b',events,re.I)
+  if status:
+   pause(ROOT,provider,int(status[1]),None);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
+  raise RuntimeError('Harness failed; inspect owner-only events.jsonl')
+ return result
