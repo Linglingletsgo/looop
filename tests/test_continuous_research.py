@@ -25,7 +25,7 @@ class Continuous(unittest.TestCase):
   receipt={'state':'no_work','started_at':100}
   self.assertIsNone(autonomy.recheck_at(receipt,'once'))
   self.assertEqual(autonomy.recheck_at(receipt,'continuous'),0)
-  receipt.update(planning_protocol=2,finished_at=120)
+  receipt.update(planning_protocol=3,finished_at=120)
   self.assertEqual(autonomy.recheck_at(receipt,'continuous'),1020)
  def test_only_matching_mainline_is_planning_evidence(self):
   folder=self.root/'data/mainline-verification';folder.mkdir(parents=True)
@@ -46,3 +46,20 @@ class Continuous(unittest.TestCase):
   with patch('executor.command',return_value=subprocess.CompletedProcess([],1,'failure')):
    with self.assertRaisesRegex(ValueError,'verification failed'):autonomy.verify_goal(self.root,'test',self.repo,self.sha,evidence,{})
   self.assertEqual(json.loads((self.root/'data/goal-verification/test.json').read_text())['status'],'failed')
+
+ def test_goal_collects_missing_test_from_packet_using_executed_runner(self):
+  testdir=self.repo/'tests/integration';testdir.mkdir(parents=True)
+  for name in ('old.test.ts','new.test.ts'):(testdir/name).write_text('// synthetic')
+  autonomy.git(self.repo,'add','.');autonomy.git(self.repo,'commit','-qm','tests')
+  sha=autonomy.git(self.repo,'rev-parse','HEAD').decode().strip()
+  folder=self.root/'data/deliveries/one';folder.mkdir(parents=True)
+  (folder/'state.json').write_text(json.dumps({'state':'merged','mainline_verified':sha,'target_sha':sha,'round':1}))
+  runner=['npm','run','test:integration','--','--configLoader=runner','--no-cache']
+  (folder/'checks-1.json').write_text(json.dumps([{'argv':runner+['tests/integration/old.test.ts'],'exit_code':0}]))
+  bindings=self.root/'data/delivery-bindings';bindings.mkdir()
+  (bindings/'one.json').write_text(json.dumps({'lane':'test','packet':{'allowed_paths':['tests/integration/new.test.ts']}}))
+  shared={'product_goal':{'id':'goal','status':'active'},'tasks':{'one':{'goal_id':'goal'}}}
+  evidence=autonomy.planning_evidence(self.root,'test',self.repo,sha,shared)
+  self.assertIn(runner+['tests/integration/new.test.ts'],evidence['goal_checks'])
+  # No shell commands or extra files outside the original Packet are inferred.
+  self.assertEqual(len(evidence['goal_checks']),2)

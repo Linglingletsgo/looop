@@ -26,11 +26,11 @@ RESEARCH_RECHECK_SECONDS=15*60
 def recheck_at(previous,mode):
  if mode!='continuous' or previous.get('state')=='queued':return None
  # Old receipts predate evidence-aware planning and may be re-evaluated once.
- if previous.get('planning_protocol')!=2:return 0
+ if previous.get('planning_protocol')!=3:return 0
  return previous.get('finished_at',previous.get('started_at',0))+RESEARCH_RECHECK_SECONDS
 
 def planning_evidence(root,lane,repo,sha,shared):
- root=pathlib.Path(root);result={'baseline_sha':sha,'deliveries':[]}
+ root=pathlib.Path(root);result={'baseline_sha':sha,'deliveries':[]};goal_test_paths=set()
  def ancestor(target):
   return isinstance(target,str) and subprocess.run(['git','merge-base','--is-ancestor',target,sha],cwd=repo,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
  head=root/'data/mainline-verification'/(lane+'.json')
@@ -50,11 +50,33 @@ def planning_evidence(root,lane,repo,sha,shared):
   if not checks.exists():continue
   rows=json.loads(checks.read_text())
   if not rows or any(c['exit_code'] for c in rows):continue
+  binding=root/'data/delivery-bindings'/(job+'.json')
+  if binding.exists():
+   bound=json.loads(binding.read_text())
+   if bound.get('lane')==lane:
+    for name in bound.get('packet',{}).get('allowed_paths',[]):
+     if name.endswith(('.test.ts','.test.js','.test.tsx','.test.jsx','.spec.ts','.spec.js')):
+      from project_adapter import safe_file
+      safe_file(repo,name)
+      goal_test_paths.add(name)
   result['deliveries'].append({'task_id':job,'target_sha':state['target_sha'],'mainline_verified':state['mainline_verified'],'receipt_path':str(checks),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in rows]})
  result['goal_checks']=[]
  for receipt in result['deliveries']:
   for check in receipt['checks']:
    if check['argv'] not in result['goal_checks']:result['goal_checks'].append(check['argv'])
+ # Inherit only a previously executed targeted test command, never shell text from PM prose.
+ templates=[]
+ for argv in list(result['goal_checks']):
+  indexes=[i for i,arg in enumerate(argv) if arg.endswith(('.test.ts','.test.js','.test.tsx','.test.jsx','.spec.ts','.spec.js'))]
+  if indexes:
+   start=indexes[0]
+   if not all(i in indexes for i in range(start,len(argv))):continue
+   covered=set(argv[start:]);parents={str(pathlib.PurePosixPath(n).parent) for n in covered}
+   missing=sorted(n for n in goal_test_paths-covered if str(pathlib.PurePosixPath(n).parent) in parents)
+   if missing:
+    command=argv[:start]+missing
+    if command not in templates:templates.append(command)
+ result['goal_checks']+=templates
  result['deliveries']=result['deliveries'][-6:]
  return result
 
@@ -236,7 +258,7 @@ def tick(lane):
    b=Board();owner=b.api('GET','/auth/get-session')['user']['id'];company=cfg.get('company',s.get('company'))
    job=uuid.uuid4().hex;folder=ROOT/'data/autonomy'/lane/job;folder.mkdir(parents=True,mode=0o700)
    claim(ROOT,lane,job)
-   receipt={'owner':identity(),'planning_protocol':2,'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
+   receipt={'owner':identity(),'planning_protocol':3,'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
    if current_goal:receipt.update(goal_id=current_goal['id'],goal_completed_slices=current_goal.get('completed_slices',0))
    save(folder/'state.json',receipt)
    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'discovering','reason':'持续循环：PM 正在核验当前目标并选择下一步。' if mode['mode']=='continuous' else 'PM 正在规划本次目标。','attempt':job,'at':time.time()})
