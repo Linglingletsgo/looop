@@ -55,7 +55,9 @@ class DeliveryInputs(unittest.TestCase):
   for name,prompt in prompts:
    if name.startswith(('reviewer-','acceptance-')):
     self.assertIn('Controller check receipt',prompt);self.assertIn(result['target_sha'],prompt)
-    self.assertIn('output_tail',prompt);self.assertNotIn('BUILDER-PRIVATE-THOUGHT',prompt)
+    self.assertNotIn('output_tail',prompt);self.assertIn('receipt_path',prompt);self.assertNotIn('BUILDER-PRIVATE-THOUGHT',prompt)
+    receipt=self.root/'data/deliveries/task-one/checks-1.json'
+    self.assertIn(str(receipt),prompt);self.assertEqual(json.loads(receipt.read_text())[0]['output'],'passed')
 
 class ResearchProjection(unittest.TestCase):
  def test_brief_retains_counterevidence_and_exact_sources_only(self):

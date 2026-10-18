@@ -85,3 +85,8 @@ Linux 验证：251 项 Python 测试及 HTTP 集成通过，覆盖格式纠正�
 Research format corrections receive the prior bounded response so source evidence is not lost across fresh harness calls. An `insufficient_evidence` report continues the same question with up to two targeted read-only follow-ups; `human_decision` and `wait_source` stop immediately with an explicit planning blocker. A remaining gap is `research_incomplete`, never `no_work`: the owner can resolve it through the planning intervention entry, and the next attempt receives the bounded question and gap for the same baseline and planning revision. Rejected research and a genuine lack of valuable work remain idle outcomes. Source quotations, project guards and independent review are unchanged.
 
 所有调度阶段使用独立的 handoff.json 和 handoff.schema.json。控制器创建 version/run_id/nonce，Agent 只更新 result；文件必须通过严格 JSON、字段结构与执行身份校验。文件可被无 Paperclip 的外部对话读取；项目当前状态仍由控制器校验后同步，避免并发覆盖。Builder 漏写或写坏文件时，仅只读修复交接，不重做开发；自然语言保留在 result.md。产物沿用既有有界保留策略。
+
+
+### 审核输入
+
+成功检查只注入目标 SHA、命令、退出码及现有检查产物路径；完整输出保留在产物，按需读取，不重复注入终端日志。每轮提供完整基线到目标的 diff 命令和变更文件。复审另外提供同一审核模式上一轮的 SHA、结论、发现及产物路径，以及上一轮到当前目标的修复 diff；验证祖先关系，保留完整独立审核，不以旧结论代替当前审批。不传 Builder 对话。先验证既有发现和修复影响，再覆盖完整改动的相关风险；不为凑发现无限探索。输出要求统一指向 handoff.json，运行不设置新增时限。

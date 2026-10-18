@@ -269,3 +269,32 @@ class Delivery(unittest.TestCase):
    return '{"verdict":"approved","findings":[]}'
   with self.assertRaisesRegex(GateError,'Builder blocked'):self.execute(harness=model)
   candidate=self.root/'data/deliveries/task-one/candidate';self.assertEqual(delivery.git(candidate,'rev-parse','HEAD').decode().strip(),self.packet['baseline_sha'])
+
+ def test_review_receipt_omits_success_output_but_keeps_evidence(self):
+  text=delivery.check_context('target',[{'argv':['node','test'],'exit_code':0,'output':'\x1b[32mUNRELATED_OUTPUT'*1000}],self.root/'checks.json')
+  self.assertNotIn('UNRELATED_OUTPUT',text)
+  self.assertIn(str(self.root/'checks.json'),text)
+  self.assertIn('"target_sha": "target"',text)
+  self.assertIn('"exit_code": 0',text)
+ def test_rereview_gets_previous_findings_and_repair_delta(self):
+  reviews=[];builds=[]
+  def model(workspace,scratch,prompt,**kwargs):
+   self.assertNotIn('Return only JSON',prompt)
+   if kwargs['role']=='builder':
+    builds.append(1);(workspace/'app.py').write_text('value = '+str(len(builds))+'\n')
+   if 'Independently review full' in prompt:
+    reviews.append(prompt)
+    if len(reviews)==1:return '{"verdict":"changes_requested","findings":["[high] app.py:1 incorrect value; use 2"]}'
+   return '{"verdict":"approved","findings":[]}'
+  state=self.execute(harness=model)
+  self.assertEqual(state['state'],'validated')
+  self.assertEqual(len(reviews),2)
+  self.assertNotIn('Repair delta:',reviews[0])
+  self.assertIn('Repair delta: git diff ',reviews[1])
+  self.assertIn('[high] app.py:1 incorrect value; use 2',reviews[1])
+  self.assertIn('validated-result.json',reviews[1])
+  self.assertIn('independently assess the complete baseline-to-target change',reviews[1])
+  self.assertIn('Full change: git diff '+self.packet['baseline_sha'],reviews[1])
+ def test_navigation_rejects_unrelated_previous_sha(self):
+  with self.assertRaises(subprocess.CalledProcessError):
+   delivery.review_navigation(self.repo,self.packet['baseline_sha'],self.packet['baseline_sha'],{'target_sha':'f'*40,'run_id':'other','verdict':'approved'},self.root)

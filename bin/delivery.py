@@ -70,6 +70,25 @@ def saved_result(report,stage='build'):
   return check_result(json.dumps(result,ensure_ascii=False))
  return check_result(report.read_text())
 
+def check_context(target,checks,receipt):
+ # Successful output is evidence on disk, not repeated prompt context.
+ return ('\nController check receipt: '+json.dumps({'target_sha':target,'receipt_path':str(receipt),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in checks]},ensure_ascii=False)+
+  '\nThese checks already ran on this exact target. Read the receipt for full output when needed. Run additional targeted checks for a specific suspected defect or project requirement; do not repeat the full suite solely for confirmation.\n')
+
+def review_navigation(candidate,baseline,target,previous,folder):
+ changed=git(candidate,'diff','--name-status',baseline,target).decode().strip()
+ text='\nReview navigation (controller facts, not an approval):\nFull change: git diff '+baseline+' '+target+'\nChanged files:\n'+changed+'\n'
+ if previous and previous.get('target_sha') and previous.get('run_id'):
+  prior=previous['target_sha']
+  git(candidate,'merge-base','--is-ancestor',prior,target)
+  report=folder/previous['run_id']/'validated-result.json'
+  text+='Previous independent review at '+prior+'; verdict '+previous['verdict']+'. Full findings: '+str(report)+'\n'
+  text+='Prior findings (navigation only): '+json.dumps(previous.get('findings',[]),ensure_ascii=False)[:6000]+'\n'
+  if prior!=target:text+='Repair delta: git diff '+prior+' '+target+'\n'
+ text+=('Start with the diff and trace changed behavior into relevant callers and tests. For re-review, verify prior findings and repair regressions first, then independently assess the complete baseline-to-target change. Prior approval never approves a new SHA. '
+  'Read focused ranges; expand only to resolve a concrete correctness question. Conclude when requirements, changed paths and relevant failure cases are covered; do not keep searching solely to produce more findings. No Builder conversation is supplied.\n')
+ return text
+
 def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False):
  validate(packet,policy)
  if resume_review and resume_builder:raise GateError('Choose one resume stage')
@@ -200,7 +219,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    plans=[]
    for step in policy['workflow']:
     if not resumed and step['stage'] in ('plan','advisory'):
-     _,result=role(step,baseline,context+'This is PRE-IMPLEMENTATION planning/advice, not acceptance of existing baseline. Unimplemented functions or failing baseline tests are the authorized work to be done, not blockers by themselves. Mark blocked only for unresolved requirements, incompatible project rules or missing prerequisites that prevent Builder from proceeding. Read-only bounded '+step['stage']+'; identify actual unresolved blockers. Return JSON {"verdict":"approved|blocked","findings":[],"plan":"..."}.')
+     _,result=role(step,baseline,context+'This is PRE-IMPLEMENTATION planning/advice, not acceptance of existing baseline. Unimplemented functions or failing baseline tests are the authorized work to be done, not blockers by themselves. Mark blocked only for unresolved requirements, incompatible project rules or missing prerequisites that prevent Builder from proceeding. Read-only bounded '+step['stage']+'; identify actual unresolved blockers. Write handoff.json result {"verdict":"approved|blocked","findings":[],"plan":"..."}.')
      if check_result(result)['verdict']!='approved':raise GateError('Planning blocked: '+result)
      plans.append(result)
    if resume_builder:
@@ -217,13 +236,14 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if not raw.exists():raw.write_text(artifact.read_text())
     (artifact.parent/'validated-result.json').write_text(json.dumps(saved_result(artifact),ensure_ascii=False))
    feedback='';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
+   review_history=dict(state.get('reviews',{}))
    for roundno in range(resumed['round'] if resumed else 1,policy['max_rounds']+1):
     state['round']=roundno
     if not resumed or roundno!=resumed['round']:
      persist('building')
      workspace=snapshot(candidate,git(candidate,'rev-parse','HEAD').decode().strip(),root/f'build-{roundno}')
      before=tree(workspace)
-     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Return only JSON {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; the controller runs the full configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
+     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Write handoff.json result {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; the controller runs the full configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
      if check_result(build_result)['verdict']=='blocked':raise GateError('Builder blocked: '+build_result)
      state.pop('pending_builder',None)
      after=tree(workspace);changed={p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)}
@@ -242,19 +262,21 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if any(c['exit_code'] for c in checks):
      if policy.get('on_check_failure')=='stop':raise GateError('Test-only check failed; preserve evidence; Product disposition required')
      feedback=json.dumps(checks);continue
-    check_context='\nController check receipt: '+json.dumps({'target_sha':target,'checks':[{'argv':c['argv'],'exit_code':c['exit_code'],'output_tail':c['output'][-2000:]} for c in checks]},ensure_ascii=False)+'\nThese checks already ran on this exact target. Review the diff independently; run additional targeted checks when needed or required by project rules, rather than repeating the full suite solely for confirmation.\n'
+    receipt=root/(f'checks-{roundno}-resume-'+str(state['review_resume_count'])+'.json' if resumed else f'checks-{roundno}.json')
+    check_summary=check_context(target,checks,receipt)
     failed=False
     for step in policy['workflow']:
      if step['stage']!='review':continue
      mode=step.get('mode','standard');persist('review_'+mode)
-     rr,text=role(step,review,context+check_context+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. A private copy of candidate Git metadata is available. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
+     rr,text=role(step,review,context+check_summary+review_navigation(candidate,sha,target,review_history.get(mode),root)+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. A private copy of candidate Git metadata is available. Write handoff.json result {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
      v=check_result(text);state['reviews'][mode]={**v,'mode':mode,'run_id':rr,'target_sha':target}
+     review_history[mode]=dict(state['reviews'][mode])
      if v['verdict']=='blocked':raise GateError('Review blocked: '+text)
      if v['verdict']!='approved':feedback=text;failed=True;break
     if failed:continue
     if any(s['stage']=='acceptance' for s in policy['workflow']):
      step=next(s for s in policy['workflow'] if s['stage']=='acceptance');persist('acceptance')
-     ar,text=role(step,review,context+check_context+'Independently verify acceptance criteria against target SHA '+target+' and available synthetic checks. Source visible; this is not black-box or production acceptance. Run permitted checks if useful. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[],"evidence":[]}.',metadata=candidate/'.git')
+     ar,text=role(step,review,context+check_summary+'Independently verify acceptance criteria against target SHA '+target+' and available synthetic checks. Source visible; this is not black-box or production acceptance. Run permitted checks if useful. Write handoff.json result {"verdict":"approved|changes_requested|blocked","findings":[],"evidence":[]}.',metadata=candidate/'.git')
      av=check_result(text)
      if av['verdict']=='blocked':raise GateError('Acceptance blocked: '+text)
      if av['verdict']!='approved':feedback=text;continue
