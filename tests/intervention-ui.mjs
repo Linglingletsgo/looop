@@ -29,4 +29,10 @@ assert.equal(payload.revision,8);assert.equal(payload.action,'retry');assert.equ
 response.intervention.retry_allowed=false;response.intervention.unavailable_reason='基线变化，需要重新规划';
 await vm.runInContext("evidence(project,'task')",context);elements=flatten(nodes.get('dialog-body'));
 assert.ok(!elements.some(n=>n.tag==='form'));assert.ok(elements.some(n=>n.textContent===response.intervention.unavailable_reason));
+context.planning={kind:'planning',job:'pm-one',reason:'schema failed',instruction:'协议修复后重新规划',retry_allowed:true};
+vm.runInContext('planningHelp(project,planning)',context);elements=flatten(nodes.get('dialog-body'));
+assert.ok(elements.some(n=>n.tag==='h4'&&n.textContent==='发生了什么'));
+elements.find(n=>n.tag==='form').children.find(n=>n.tag==='textarea').value='已修复协议';elements.find(n=>n.tag==='form').listeners.submit({preventDefault(){}});
+assert.equal(payload.action,'retry_planning_attempt');assert.equal(payload.job,'pm-one');assert.equal(payload.revision,project.revision);
+context.planning.retry_allowed=false;vm.runInContext('planningHelp(project,planning)',context);assert.ok(!flatten(nodes.get('dialog-body')).some(n=>n.tag==='form'));
 console.log('Intervention UI passed: readable diagnosis, collapsed evidence, explicit recovery, latest revision, unavailable action hidden.');

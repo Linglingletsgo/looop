@@ -23,6 +23,12 @@ def proposal(value,current=None):
  else:result['id']='goal-'+hashlib.sha256(json.dumps({k:result[k] for k in ('title','user_value','success_criteria')},sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:16]
  return result
 
+def completion_coverage(evidence,criteria):
+ # Multiple source proofs per criterion are valid; ordering is presentation only.
+ if not isinstance(evidence,list) or not 1<=len(evidence)<=64 or any(not isinstance(e,dict) or not isinstance(e.get('criterion'),str) for e in evidence):raise ValueError('Completion evidence must list exact success criteria')
+ if {e['criterion'] for e in evidence}!=set(criteria):raise ValueError('Provide evidence for every exact success criterion; do not add unknown criteria')
+ return evidence
+
 def bind(doc,job,details,intent_ids):
  current=active(doc);goal=proposal(details,current)
  if not current:goal['id']='goal-'+hashlib.sha256((goal['id']+'\n'+job).encode()).hexdigest()[:16]

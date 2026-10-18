@@ -103,7 +103,7 @@ class GoalPlanning(unittest.TestCase):
     self.assertEqual(loop_control.settle(self.root,'test')['mode'],'once')
     if index==1:
      next_value=copy.deepcopy(self.value);next_value['packet']['requirements']=['Verify next source relationship'];next_value['product_goal']['progress']='First slice delivered';responses.append(json.dumps(next_value))
-    else:responses.append(json.dumps({'action':'goal_complete','goal_id':goal['id'],'reason':'Every specified source criterion checked','completion_evidence':[{'criterion':goal['success_criteria'][0],'path':'spec.py','quote':'Existing behavior returns stable known values.'}]}))
+    else:responses.append(json.dumps({'action':'goal_complete','goal_id':goal['id'],'reason':'Every specified source criterion checked','completion_evidence':[{'criterion':goal['success_criteria'][0],'path':'spec.py','quote':'Existing behavior returns stable known values.'}]*2}))
     autonomy.tick('test')
    self.assertEqual(model.call_count,3);self.research_mock.assert_called_once()
   self.assertEqual(store.read('test')['product_goal']['status'],'completed');self.assertEqual(store.read('test')['product_goal']['completed_slices'],2)

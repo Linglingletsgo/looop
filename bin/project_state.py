@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    if any(t['phase'] not in ('completed','cancelled') for t in doc['tasks'].values()):raise Held('Deliveries must finish before goal completion')
    if not goal.get('completed_slices'):raise Held('Goal completion requires delivered work')
    if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Concise goal completion reason required')
-   if not isinstance(evidence,list) or any(not isinstance(e,dict) for e in evidence) or [e.get('criterion') for e in evidence]!=goal['success_criteria']:raise ValueError('Evidence for every product success criterion required')
+   from product_goals import completion_coverage
+   completion_coverage(evidence,goal['success_criteria'])
    goal.update(status='completed',progress_verification='pm_evidence_reviewed',remaining=[],progress=reason,completion_reason=reason,completion_evidence=evidence,current_task=None)
    for i in goal.get('intent_ids',[]):doc['intents'][i]['status']='completed'
    doc['planning_revision']+=1;doc['selection']=None

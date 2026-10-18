@@ -74,6 +74,13 @@ def execute(value,root=ROOT):
    if value.get('resolution')!='retry_planning':raise ValueError('Unknown decision resolution')
    command={'type':'priority','intent_id':intent['id'],'priority':intent['priority'],'human_confirmed':True}
   return store.submit(lane,command,revision,request,'looop-console')
+ if action=='retry_planning_attempt':
+  from planning_intervention import retry as retry_pm
+  from board import Board
+  result=retry_pm(root,lane,value.get('job'),value.get('reason',''),revision,Board())
+  from launch_loops import launch
+  launch(root,lane)
+  return result
  if action=='retry':
   folder=root/'data/locks';folder.mkdir(exist_ok=True,parents=True)
   with (folder/('console-retry-'+lane)).open('w') as lock:

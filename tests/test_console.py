@@ -13,3 +13,10 @@ class Console(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    root=pathlib.Path(d);(root/'data').mkdir();(root/'data/control.json').write_text(json.dumps({'projects':{'demo':{'id':'project'}}}));s=Store(root);s.ensure('demo');s.bind('demo','one',{'title':'Regression'});s.transition('demo','one','blocked',{'error':'Check failed'})
    value=m.status(root)['projects'][0];self.assertEqual(value['active_count'],1);self.assertEqual(value['attention'][0]['reason'],'Check failed')
+
+ def test_blocked_planning_receipt_overrides_stale_waiting_projection(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);(root/'data').mkdir();(root/'data/control.json').write_text(json.dumps({'projects':{'demo':{'id':'project'}}}))
+   store=Store(root);store.ensure('demo');store.selection('demo','waiting','Unresolved planning attempt; inspect before replay')
+   path=root/'data/autonomy/demo/pm-one/state.json';path.parent.mkdir(parents=True);path.write_text(json.dumps({'state':'blocked','error':'Completion protocol failed','issue':'pm-task'}))
+   value=m.status(root)['projects'][0];self.assertEqual(value['phase'],'blocked');self.assertEqual(value['attention'][0]['job'],'pm-one');self.assertEqual(value['attention'][0]['reason'],'Completion protocol failed');self.assertEqual(len(value['attention']),1)
