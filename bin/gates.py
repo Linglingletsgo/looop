@@ -32,9 +32,8 @@ def require_pr(state,policy=None):
  if a.get('run_id') in [state['builder_run'],*[v['run_id'] for v in state['reviews'].values()]]:raise GateError('acceptance context reused')
 
 def verdict(text):
- text=text.strip()
- if text.startswith('```'):text=re.sub(r'^```(?:json)?\s*|\s*```$','',text)
- d=json.loads(text)
+ from output_protocol import object_value
+ d=object_value(text)
  if not isinstance(d,dict) or d.get('verdict') not in ['approved','changes_requested','blocked'] or ('findings' in d and not isinstance(d['findings'],list)):raise GateError('invalid review output: require verdict and findings array')
  return d
 

@@ -89,7 +89,7 @@ def final_text(harness,events):
   if not isinstance(e,dict):continue
   if harness=='claude' and e.get('type')=='result':
    if e.get('is_error'):raise RuntimeError('Claude Code failed; inspect owner-only events.jsonl')
-   result=e.get('result','');u=e.get('usage',{});usage.update({k:u.get(k,0) for k in usage})
+   result=json.dumps(e['structured_output'],ensure_ascii=False) if isinstance(e.get('structured_output'),dict) else e.get('result','');u=e.get('usage',{});usage.update({k:u.get(k,0) for k in usage})
   if e.get('type')=='turn.completed':
    for k in usage:usage[k]+=e.get('usage',{}).get(k,0)
   if harness=='omp' and e.get('type')=='message_end':
@@ -101,13 +101,17 @@ def final_text(harness,events):
     for target,source in [('input_tokens','input'),('output_tokens','output'),('cached_input_tokens','cacheRead')]:usage[target]+=u.get(source,0)
  return result,usage
 
-def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None):
+def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None,output_schema=None):
  scratch=pathlib.Path(scratch).resolve();scratch.mkdir(parents=True,exist_ok=True,mode=0o700);scratch.chmod(0o700)
  route=execution_route or {'harness':'codex','provider':provider_id};provider=route['provider'];harness=route.get('harness','codex')
  if paused(ROOT,provider) is not None:raise RuntimeError('Provider unavailable/quota: paused; operator resume required')
  from repository import source_fingerprint
  before=source_fingerprint(workspace) if role!='builder' else None
  cmd,env,model=invocation(pathlib.Path(workspace).resolve(),scratch,route)
+ if output_schema:
+  if harness=='codex':
+   schema_path=scratch/'output-schema.json';schema_path.write_text(json.dumps(output_schema));cmd[-1:-1]=['--output-schema',str(schema_path)]
+  elif harness=='claude':cmd+=['--json-schema',json.dumps(output_schema)]
  # Archive snapshots have no .git: never discover the controller repository above them.
  for key in ('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES'):
   env.pop(key,None)

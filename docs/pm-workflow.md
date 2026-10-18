@@ -24,6 +24,14 @@ Reviewer 与可选验收接收同一目标 SHA 的控制器检查回执（命令
 
 Linux 验证：257 项 Python 测试与 HTTP 集成通过。独立夹具覆盖规划→审核格式失败→同提交恢复→一次发布→模拟合并→真实 Git 主线刷新与复验，Builder 不重复。另以真实 Codex 只读调用验证重复测试机会返回 no_work，提示词 2,584 字符；这只是该夹具的输入规模，不等于总 token 消耗或所有选题质量保证。未启动 GTP 新任务，仍 paused。
 
+## 输出传输与已完成 Builder 的恢复
+
+交付角色由同一输出协议读取：纯 JSON 或唯一且无冲突的 JSON 围栏。围栏外有其它 JSON、明确审批/阻塞结论、多个围栏或损坏结构时不取最后一个、不猜 verdict、不默认通过。格式包装可以确定性消除，语义歧义仍需纠正。原始输出保留为 result.raw.md，规范产物仍经 verdict/findings 校验，业务 blocked/changes_requested 不被包装消除。
+
+Codex 使用 --output-schema，Claude Code 使用 --json-schema 并读取 structured_output；OMP 沿用原生调用及统一接收协议。原生结构约束目前用于交付阶段，PM 两阶段研究/提案仍有独立格式校验与有限纠正。已通过 Codex harness + Codex 订阅、Codex harness + Command Code Flash 的真实独立输出验证，不切换模型或付费路线。
+
+Builder 调用前记录 run_id、工作区和原候选 SHA。输出格式失败后，显式 resume_builder=True 只接收已停止、未发布、同 Packet/policy/基线/候选且文件变化在授权内的已完成工作区；必须能读取明确的 ready 结论。保留原产物并提交候选后，从全量配置检查和独立审核继续，不为纠正格式再次写代码。首次 Builder 失败也支持此恢复；无法判断真实结论时仍停止。新审核发现真实缺陷继续原有修改循环，不能以格式恢复绕过。
+
 ## 使用方式
 
 1. 在项目卡片的执行设置选择「只推进 Backlog」或「Backlog + 调研新需求」。

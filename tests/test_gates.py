@@ -38,3 +38,9 @@ class Gates(unittest.TestCase):
   for text in ('[]','null','{"verdict":"approved","findings":"none"}','Summary\n{"verdict":"approved","findings":[]}','{"verdict":"blocked","findings":[]}\n{"verdict":"approved","findings":[]}'):
    with self.assertRaises(ValueError):verdict(text)
   self.assertEqual(verdict('```json\n{"verdict":"blocked","findings":["Evidence missing"]}\n```')['verdict'],'blocked')
+
+ def test_unique_fenced_result_preserves_verdict_but_rejects_conflicting_prose(self):
+  self.assertEqual(verdict('Implementation complete.\n```json\n{"verdict":"approved","findings":[]}\n```')['verdict'],'approved')
+  for text in ('Blocked by missing permission.\n```json\n{"verdict":"approved","findings":[]}\n```','```json\n{"verdict":"blocked","findings":[]}\n```\n```json\n{"verdict":"approved","findings":[]}\n```'):
+   with self.assertRaises(ValueError):verdict(text)
+  self.assertEqual(verdict('Report follows.\n```json\n{"verdict":"blocked","findings":["Missing permission"]}\n```')['verdict'],'blocked')

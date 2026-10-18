@@ -218,3 +218,33 @@ class Delivery(unittest.TestCase):
   with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',return_value='{"verdict":"approved","findings":[]}'),patch.object(delivery,'command',return_value=subprocess.CompletedProcess([],0,'fresh')),patch('process_owner.alive',return_value=False):
    state=delivery.execute(self.packet,self.policy,'task-one',emit=lambda *_:None,publish=False,resume_review=True)
   self.assertEqual(state['state'],'validated');self.assertEqual(store.read('test')['tasks']['task-one']['phase'],'completed')
+
+ def test_wrapped_builder_output_is_adopted_once_without_reexecuting(self):
+  calls=[]
+  def model(workspace,scratch,prompt,**kwargs):
+   calls.append(kwargs['role']);result=self.harness(workspace,scratch,prompt,**kwargs)
+   if kwargs['role']=='builder':return 'Implementation complete.\n```json\n'+result+'\n```'
+   return result
+  self.assertEqual(self.execute(harness=model)['state'],'validated');self.assertEqual(calls.count('builder'),1)
+ def test_builder_format_failure_preserves_workspace_and_resumes_without_model_replay(self):
+  calls=[]
+  def model(workspace,scratch,prompt,**kwargs):
+   result=self.harness(workspace,scratch,prompt,**kwargs)
+   if kwargs['role']=='builder':return 'Implementation complete but malformed result'
+   return result
+  with self.assertRaises(ValueError):self.execute(harness=model)
+  folder=self.root/'data/deliveries/task-one';state=json.loads((folder/'state.json').read_text());pending=state['pending_builder']
+  report=folder/pending['run_id']/'result.md';report.parent.mkdir(parents=True,exist_ok=True);report.write_text('Implementation complete.\n```json\n{"verdict":"approved","findings":[],"summary":"Completed"}\n```')
+  def review(workspace,scratch,prompt,**kwargs):
+   self.assertNotEqual(kwargs['role'],'builder');calls.append(scratch.name);return '{"verdict":"approved","findings":[]}'
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=review),patch.object(delivery,'command',return_value=subprocess.CompletedProcess([],0,'fresh')),patch('process_owner.alive',return_value=False):
+   result=delivery.execute(self.packet,self.policy,'task-one',publish=False,resume_builder=True,emit=lambda *_:None)
+  self.assertEqual(result['state'],'validated');self.assertEqual(result['builder_run'],pending['run_id']);self.assertEqual(len(calls),2)
+  self.assertEqual((folder/'candidate/app.py').read_text(),'value = 1\n');self.assertTrue(report.with_name('result.raw.md').exists())
+ def test_blocked_builder_fenced_output_never_becomes_success(self):
+  def model(workspace,scratch,prompt,**kwargs):
+   self.harness(workspace,scratch,prompt,**kwargs)
+   if kwargs['role']=='builder':return 'Result follows.\n```json\n{"verdict":"blocked","findings":["Missing prerequisite"]}\n```'
+   return '{"verdict":"approved","findings":[]}'
+  with self.assertRaisesRegex(GateError,'Builder blocked'):self.execute(harness=model)
+  self.assertEqual(delivery.git(self.root/'data/deliveries/task-one/candidate','rev-parse','HEAD').decode().strip(),self.packet['baseline_sha'])

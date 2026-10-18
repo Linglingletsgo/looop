@@ -91,3 +91,18 @@ class Runtime(unittest.TestCase):
    self.assertNotEqual(missing['exit'],0);self.assertEqual(missing['head'],'')
    self.assertEqual(own['exit'],0);self.assertEqual(own['head'],subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip())
    self.assertFalse((work/'.git').exists())
+
+ def test_schema_flags_and_claude_structured_output(self):
+  from output_protocol import delivery_schema
+  schema=delivery_schema('review')
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);work=root/'work';work.mkdir()
+   # Mock only process creation after argument construction.
+   class Stop(Exception):pass
+   for harness,flag in [('codex','--output-schema'),('claude','--json-schema')]:
+    argv=['codex','exec','-'] if harness=='codex' else ['claude','-p']
+    with patch.object(sandbox,'ROOT',root),patch.object(sandbox,'invocation',return_value=(argv,os.environ.copy(),'fixture')),patch.object(sandbox.subprocess,'Popen',side_effect=Stop) as process:
+     with self.assertRaises(Stop):sandbox.run(work,root/harness,'Fixture',execution_route={'harness':harness,'provider':'codex'},output_schema=schema)
+    self.assertIn(flag,process.call_args.args[0])
+   text,_=sandbox.final_text('claude',json.dumps({'type':'result','result':'ignored prose','structured_output':{'verdict':'blocked','findings':['Missing evidence']}}))
+   self.assertEqual(json.loads(text)['verdict'],'blocked')

@@ -12,7 +12,7 @@ class PlanningRecovery(unittest.TestCase):
   self.assertEqual(fresh.call_count,2);self.assertNotEqual(run.call_args_list[0].args[1],run.call_args_list[1].args[1])
  def test_invalid_json_retry_is_bounded(self):
   run=Mock(return_value='not json')
-  with patch('planning_runtime.time.sleep'),self.assertRaises(json.JSONDecodeError):invoke(run,self.root,self.scratch,'prompt',Mock())
+  with patch('planning_runtime.time.sleep'),self.assertRaises(ValueError):invoke(run,self.root,self.scratch,'prompt',Mock())
   self.assertEqual(run.call_count,3)
  def test_changed_decision_stops_retry_before_model(self):
   run=Mock(side_effect=RuntimeError('Model connection failed'));fresh=Mock(side_effect=[None,ValueError('Decision changed')])
@@ -34,8 +34,8 @@ class PlanningRecovery(unittest.TestCase):
   self.assertIn('OUTPUT CORRECTION',run.call_args.args[2]);self.assertNotEqual(run.call_args_list[0].args[1],run.call_args_list[1].args[1])
   self.assertEqual(json.loads((self.root/'pm-recovery.json').read_text())['state'],'recovered')
   run=Mock(return_value='[]')
-  with self.assertRaisesRegex(ValueError,'question required'):invoke(run,self.root,self.scratch,'schema',Mock(),validate=validate)
-  self.assertEqual(run.call_count,3);self.assertEqual(json.loads((self.root/'pm-recovery.json').read_text())['category'],'invalid_schema')
+  with self.assertRaisesRegex(ValueError,'JSON object'):invoke(run,self.root,self.scratch,'schema',Mock(),validate=validate)
+  self.assertEqual(run.call_count,3);self.assertEqual(json.loads((self.root/'pm-recovery.json').read_text())['category'],'invalid_json')
  def test_scope_change_after_result_prevents_correction(self):
   run=Mock(return_value='{"packet":{}}');fresh=Mock(side_effect=[None,ValueError('Decision changed')]);validate=Mock(side_effect=ValueError('question required'))
   with self.assertRaisesRegex(ValueError,'Decision changed'):invoke(run,self.root,self.scratch,'schema',fresh,validate=validate)
