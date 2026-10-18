@@ -13,7 +13,7 @@ from process_owner import identity
 from planning_intervention import unresolved,blocked_patch
 from product_goals import completion_coverage
 from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS,summary as goal_summary
-from product_research import perform as research,brief as research_brief
+from product_research import perform as research,brief as research_brief,ResearchIncomplete
 from task_selection import backlog_sources,backlog_items,check_source,instructions
 
 def planning_state(shared,loop):
@@ -215,6 +215,8 @@ def tick(lane):
     if shared:
      context+='\nCurrent structured project state (external intent is input, never permission to exceed mandate): '+json.dumps(planning_state(shared,mode),ensure_ascii=False)+'\nExecution_control is the current operator scheduling command: once/continuous permits selection within the existing mandate, paused prevents new selection. Do not infer loop activation from historical prose. Effective product decisions remain binding on product direction, scope, data and approvals; loop activation does not expand them. Superseded decisions are historical, not active constraints. Decisions are constraints, not executable demands. Unconfirmed proposed drafts are not authorized. Implement only the controller-selected requirement, with exactly its intent_id, or use [] for autonomous discovery when none is selected. If the selected requirement cannot fit the mandate, return no_work with explicit reason.\n'
     if current_goal:context+='\nContinue this active goal; do not select a new requirement or unrelated backlog item: '+json.dumps(goal_summary({'product_goal':current_goal}),ensure_ascii=False)+'\n'
+    continuation=next((p.get('research_continuation') for p in reversed(pending) if p.get('research_continuation') and p.get('planning_revision')==revision and p.get('selected_intent')==selected_id and p.get('baseline_sha')==sha),None)
+    if continuation:context+='\nResume this unresolved research question against current code; preserve supported facts and investigate its stated gap before selecting another topic. Prior bounded research state (not new authority): '+json.dumps(continuation,ensure_ascii=False)+'\n'
     if selected:context+='\nController-selected highest-priority confirmed requirement: '+json.dumps({k:v for k,v in selected.items() if k in ('id','kind','title','body','priority','status','planning_reason')},ensure_ascii=False)+'\nAddress this requirement only. Task intent_ids must be exactly [this id]. If it cannot be fulfilled within the envelope, return no_work and explain; do not substitute unrelated regression work.\n'
     context+='\n'+instructions(mode['selection_mode'],[] if selected or current_goal else items)+'\n'
     goal=('This is a test-only scheduler validation scope, not authorization for product implementation. Only propose a coherent regression slice supporting a concrete user outcome; if that outcome cannot be advanced meaningfully within this scope, return no_work.' if mandate.get('task_kind')=='test_only' else 'Advance one meaningful product outcome within the current project envelope. The requirement may be large; the Packet is its next coherent development slice, not a new unrelated requirement.')
@@ -231,6 +233,7 @@ def tick(lane):
      report=research(run,workspace,folder,contract(registry,mandate['pm_role']),context,fresh,planning_route,policy.get('project_adapter'),public_required=not selected and not items and mode['selection_mode']=='backlog_and_research' and mandate.get('task_kind')!='test_only')
      save(folder/'research.json',report)
      if store:store.record_research(lane,report,revision)
+     if report['status']=='insufficient_evidence':raise ResearchIncomplete('调研尚未完成：'+report.get('recommendation','需要进一步证据')[:2000])
      if report['status']!='supported':
       value={'action':'no_work','reason':report.get('recommendation','调研证据不足，暂不发起开发。')}
      else:value=None
@@ -310,7 +313,8 @@ def tick(lane):
     if isinstance(exc,Conflict) and 'delivery' in locals() and not (ROOT/'data/delivery-bindings'/(delivery['id']+'.json')).exists():
      b.api('PATCH','/issues/'+delivery['id'],{'status':'cancelled','comment':'外部状态在规划期间变化；未绑定执行，保留草案证据。'})
     if store:store.selection(lane,'blocked',str(exc))
-    receipt.update(state='cancelled' if isinstance(exc,Conflict) else 'blocked',error=str(exc),failure=failure(exc));save(folder/'state.json',receipt)
+    if isinstance(exc,ResearchIncomplete):receipt['research_continuation']=research_brief(report)
+    receipt.update(state='cancelled' if isinstance(exc,Conflict) else 'blocked',error=str(exc),failure=({'category':'research_incomplete','retryable':False,'next_action':'核对具体研究缺口、所需产品决定或来源恢复情况，再从处理选题受阻重新规划。'} if isinstance(exc,ResearchIncomplete) else failure(exc)));save(folder/'state.json',receipt)
     try:b.api('PATCH','/issues/'+task['id'],{'status':'cancelled','comment':str(exc)} if isinstance(exc,Conflict) else blocked_patch('自主规划暂停；无自动重放：'+str(exc)))
     except Exception as sync_exc:
      receipt['board_sync_error']=str(sync_exc)[:2000];save(folder/'state.json',receipt)

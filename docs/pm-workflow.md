@@ -81,3 +81,5 @@ Builder 调用前记录 run_id、工作区和原候选 SHA。输出格式失败�
 显式 `delivery.execute(..., resume_review=True)` 仅恢复未发布、工作进程已退出的审核格式失败。核验原 Packet/policy、基线、候选提交、干净工作树、授权改动路径及恢复次数后，保留旧 state、Builder、检查与审核产物，从同一提交重跑检查和独立审核，不重跑 Builder。原生任务阻塞不能走此快捷恢复。恢复的新检查产物以 checks-<round>-resume-<n>.json 保存；合并控制器读取对应新产物，不能沿用旧检查。若新审核要求修改，则回到项目原有 Builder 循环。运行没有新增总时限，发布与合并仍受既有配置门禁控制。
 
 Linux 验证：251 项 Python 测试及 HTTP 集成通过，覆盖格式纠正、明确阻塞不重试、同提交恢复且 Builder 不重复、脏候选拒绝、共享状态恢复及新检查证据门禁。
+
+Research format corrections receive the prior bounded response so source evidence is not lost across fresh harness calls. An `insufficient_evidence` report continues the same question with up to two targeted read-only follow-ups; `human_decision` and `wait_source` stop immediately with an explicit planning blocker. A remaining gap is `research_incomplete`, never `no_work`: the owner can resolve it through the planning intervention entry, and the next attempt receives the bounded question and gap for the same baseline and planning revision. Rejected research and a genuine lack of valuable work remain idle outcomes. Source quotations, project guards and independent review are unchanged.

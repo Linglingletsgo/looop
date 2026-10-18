@@ -49,7 +49,7 @@ class DefaultMethods(unittest.TestCase):
 
  def test_wrong_phase_packet_is_corrected_before_any_research(self):
   calls=[]
-  responses=[{'status':'proposal','packet':{'title':'Wrong phase'}},{'question':'Is export evidence sufficient?','stop_condition':'Read specification and stop','skills':['looop:investigation']},{'status':'insufficient_evidence','question':'Is export evidence sufficient?','finding':'No specification exists','counterevidence':'No factual basis','recommendation':'Wait for evidence','skill_usage':[{'path':'looop:investigation','impact':'Identified missing evidence instead of guessing'}]}]
+  responses=[{'status':'proposal','packet':{'title':'Wrong phase'}},{'question':'Is export evidence sufficient?','stop_condition':'Read specification and stop','skills':['looop:investigation']},{'status':'insufficient_evidence','question':'Is export evidence sufficient?','finding':'No specification exists','counterevidence':'No factual basis','recommendation':'Wait for evidence','next_step':{'kind':'human_decision','detail':'Provide the missing product specification'},'skill_usage':[{'path':'looop:investigation','impact':'Identified missing evidence instead of guessing'}]}]
   def run(*args,**kwargs):calls.append(args);return json.dumps(responses.pop(0))
   value=research.perform(run,self.repo,self.repo/'run','PM proposes tasks','Current state',lambda:None,{'harness':'codex','provider':'codex'})
   self.assertEqual(value['status'],'insufficient_evidence');self.assertEqual(len(calls),3)
@@ -111,8 +111,9 @@ class GoalPlanning(unittest.TestCase):
  def test_insufficient_research_never_dispatches_or_calls_proposal(self):
   store=self.configure();self.research_mock.return_value={'status':'insufficient_evidence','recommendation':'Need actual evidence'}
   with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
-   autonomy.tick('test');model.assert_not_called()
-  self.assertFalse(store.read('test')['tasks']);self.assertEqual(store.read('test')['research']['status'],'insufficient_evidence');self.assertEqual(loop_control.settle(self.root,'test')['mode'],'paused')
+   with self.assertRaises(autonomy.ResearchIncomplete):autonomy.tick('test')
+   model.assert_not_called()
+  self.assertFalse(store.read('test')['tasks']);self.assertEqual(store.read('test')['selection']['phase'],'blocked');self.assertEqual(next(json.loads(p.read_text()) for p in (self.root/'data/autonomy/test').glob('*/state.json'))['failure']['category'],'research_incomplete');self.assertEqual(store.read('test')['research']['status'],'insufficient_evidence');self.assertEqual(loop_control.settle(self.root,'test')['mode'],'paused')
  def test_decision_changed_during_research_prevents_dispatch(self):
   store=self.configure()
   def research_result(*a,**kw):

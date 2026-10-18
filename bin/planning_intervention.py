@@ -18,7 +18,7 @@ def preview(root,lane):
   if state.get('state')!='blocked':continue
   job=path.parent.name;reason=state.get('error') or state.get('reason') or '规划结果需要人工核对'
   eligible=bool(state.get('issue')) and not state.get('delivery_issue') and not (path.parent/'binding-request.json').exists() and not (path.parent/'packet.json').exists() and alive(state.get('owner')) is False
-  values.append({'kind':'planning','job':job,'title':'PM 规划受阻','reason':reason[:4000],'retry_allowed':eligible,'instruction':'修复原因后可重新规划。旧提案保留，PM 会读取最新代码和项目状态；不会重跑已完成开发。' if eligible else '规划进程尚未确认停止，或已进入任务绑定阶段；需要维护对话核对，不能直接重跑。','diagnostic':f'项目: {lane}\nPM 记录: {job}\n原因: {reason[:4000]}\n证据目录: {path.parent}\n请保留提案并核对当前代码与状态后恢复。'})
+  values.append({'kind':'planning','job':job,'title':'PM 规划受阻','reason':reason[:4000],'retry_allowed':eligible,'instruction':(('调研未完成。请处理具体证据缺口；需要产品政策决定时先补充产品决定，公开来源不可用时等待恢复。确认后重新规划。' if state.get('failure',{}).get('category')=='research_incomplete' else '修复原因后可重新规划。旧提案保留，PM 会读取最新代码和项目状态；不会重跑已完成开发。') if eligible else '规划进程尚未确认停止，或已进入任务绑定阶段；需要维护对话核对，不能直接重跑。'),'diagnostic':f'项目: {lane}\nPM 记录: {job}\n原因: {reason[:4000]}\n证据目录: {path.parent}\n请保留提案并核对当前代码与状态后恢复。'})
  return values
 
 def retry(root,lane,job,reason,expected,board):

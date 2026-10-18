@@ -36,6 +36,14 @@ class PlanningRecovery(unittest.TestCase):
   run=Mock(return_value='[]')
   with self.assertRaisesRegex(ValueError,'JSON object'):invoke(run,self.root,self.scratch,'schema',Mock(),validate=validate)
   self.assertEqual(run.call_count,3);self.assertEqual(json.loads((self.root/'pm-recovery.json').read_text())['category'],'invalid_json')
+ def test_format_correction_carries_prior_evidence(self):
+  original={'status':'supported','question':'Original discovery','sources':[{'path':'spec.md:7','quote':'Previously read exact source evidence.'}]}
+  def validate(value):
+   if value['sources'][0]['path'].endswith(':7'):raise ValueError('Remove line-number suffix')
+  corrected=json.loads(json.dumps(original));corrected['sources'][0]['path']='spec.md'
+  run=Mock(side_effect=[json.dumps(original),json.dumps(corrected)])
+  value=invoke(run,self.root,self.scratch,'Research phase',Mock(),validate=validate)
+  prompt=run.call_args.args[2];self.assertIn('Previously read exact source evidence.',prompt);self.assertIn('spec.md:7',prompt);self.assertIn('Do not discard gathered evidence',prompt);self.assertEqual(value['status'],'supported')
  def test_scope_change_after_result_prevents_correction(self):
   run=Mock(return_value='{"packet":{}}');fresh=Mock(side_effect=[None,ValueError('Decision changed')]);validate=Mock(side_effect=ValueError('question required'))
   with self.assertRaisesRegex(ValueError,'Decision changed'):invoke(run,self.root,self.scratch,'schema',fresh,validate=validate)
