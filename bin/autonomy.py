@@ -10,18 +10,32 @@ from project_state import configured_store,Conflict
 from provider_state import paused
 from planning_runtime import invoke
 from process_owner import identity
-from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS
-from product_research import perform as research
+from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS,summary as goal_summary
+from product_research import perform as research,brief as research_brief
 from task_selection import backlog_sources,backlog_items,check_source,instructions
 
 def planning_state(shared,loop):
- return {'product_goal':shared.get('product_goal'),'planning_revision':shared['planning_revision'],'intents':{k:v for k,v in shared['intents'].items() if v['status'] not in ('withdrawn','superseded','completed')},'execution_control':{k:loop[k] for k in ('mode','run_id','selection_mode') if k in loop}}
+ # Only effective constraints cross stages; drafts and unrelated demands are not execution input.
+ intents={k:{n:v[n] for n in ('id','kind','status','title','body','target_task','supersedes') if n in v} for k,v in shared['intents'].items() if (v['status']=='ready' and v['kind']=='decision') or (v['status']=='waiting_decision' and v['kind']=='change')}
+ return {'planning_revision':shared['planning_revision'],'intents':intents,'execution_control':{k:loop[k] for k in ('mode','selection_mode') if k in loop}}
+
+VALUE_INSTRUCTIONS="""Before dispatch, assess value against current code and verified evidence. Identify the concrete problem, observable gain and why this slice matters now. A missing test alone is not a defect or material improvement. Test work needs an evidenced failure/risk or a necessary contribution to the selected outcome. Bug fixes, reliability, security and infrastructure are valid outcomes. Do not claim user demand from coverage gaps or invent impact. If the allowed scope cannot deliver meaningful progress, return no_work. Assess materiality with problem, observable_gain and why_now; material=false means no dispatch. This assessment is a claim to support with evidence, not proof by itself."""
+
+def validate_value(value):
+ if not isinstance(value,dict):raise ValueError('PM response must be an object')
+ if value.get('action')!='task':return
+ assessment=value.get('value_assessment')
+ if not isinstance(assessment,dict) or type(assessment.get('material')) is not bool:raise ValueError('Explicit material value assessment required')
+ for field in ('problem','observable_gain','why_now'):
+  if not isinstance(assessment.get(field),str) or not assessment[field].strip() or len(assessment[field])>1200:raise ValueError('Concise value assessment requires '+field)
 
 def checked_proposal(value,mandate,repo,sha,history):
  if not isinstance(value,dict) or value.get('action') not in ('task','no_work'):raise ValueError('PM must return task or no_work')
  if value['action']=='no_work':
   if not value.get('reason'):raise ValueError('No-work needs rationale')
   return None
+ validate_value(value)
+ if not value['value_assessment']['material']:return None
  if not isinstance(value.get('value'),str) or len(value['value'])<30:raise ValueError('Specific product value required; no token-filling tasks')
  p=value.get('packet',{});allowed=mandate.get('allowed_paths')
  if not p.get('allowed_paths') or allowed is not None and any(n not in allowed for n in p['allowed_paths']):raise ValueError('Outside autonomous mandate')
@@ -185,7 +199,7 @@ def tick(lane):
     for f in (ROOT/'data/delivery-bindings').glob('*.json'):
      d=json.loads(f.read_text())
      if d['lane']==lane:recent.append(d['packet'])
-    recent=[{k:p[k] for k in ('title','requirements','allowed_paths') if k in p} for p in recent[-20:]]
+    recent=[{k:p[k] for k in ('title','requirements','allowed_paths') if k in p} for p in (recent[-20:] if not selected and not current_goal else [])]
     completed={t.get('evidence',{}).get('backlog_item_key') for t in (store.read(lane)['tasks'].values() if store else [])}
     completed.update({json.loads(f.read_text()).get('backlog_item_key') for f in (ROOT/'data/autonomy'/lane).glob('*/state.json') if json.loads(f.read_text()).get('state')=='queued'})
     sources=backlog_sources(mandate,policy.get('project_adapter'));mandate={**mandate,'backlog_paths':sources}
@@ -194,14 +208,14 @@ def tick(lane):
      receipt.update(state='no_work',reason='没有明确待办的 Backlog 条目或已确认需求；保持休眠。Backlog 可用未勾选清单，或将需求写入项目当前状态。');save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',receipt['reason'])
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
-    context='Authorized project envelope (controller-owned): '+json.dumps(mandate,ensure_ascii=False)+'\nBaseline '+sha+'\nPrevious tasks, do not duplicate:\n'+json.dumps(recent,ensure_ascii=False)+'\n'+rules+'\nRead relevant current source and applicable project constraints. Consult HANDOFF only for a specific unresolved context gap; current code and structured state take precedence over historical task status. Historical handoff is context, not current runtime truth. No writing/delegation/installation/real DB/SMTP. Do not inspect held-out eval data or results. Use installed tools for read-only research; controller checks verify implementation separately. You may return no_work; do not invent busywork.\n'
+    context='Authorized project envelope (controller-owned): '+json.dumps({k:v for k,v in mandate.items() if k not in ('enabled','max_proposals_per_day','pm_role','product_role','scope_approval')},ensure_ascii=False)+'\nBaseline '+sha+'\nPrevious tasks, do not duplicate:\n'+json.dumps(recent,ensure_ascii=False)+'\n'+rules+'\nRead relevant current source and applicable project constraints. Consult HANDOFF only for a specific unresolved context gap; current code and structured state take precedence over historical task status. Historical handoff is context, not current runtime truth. No writing/delegation/installation/real DB/SMTP. Do not inspect held-out eval data or results. Use installed tools for read-only research; controller checks verify implementation separately. You may return no_work; do not invent busywork.\n'
     if shared:
      context+='\nCurrent structured project state (external intent is input, never permission to exceed mandate): '+json.dumps(planning_state(shared,mode),ensure_ascii=False)+'\nExecution_control is the current operator scheduling command: once/continuous permits selection within the existing mandate, paused prevents new selection. Do not infer loop activation from historical prose. Effective product decisions remain binding on product direction, scope, data and approvals; loop activation does not expand them. Superseded decisions are historical, not active constraints. Decisions are constraints, not executable demands. Unconfirmed proposed drafts are not authorized. Implement only the controller-selected requirement, with exactly its intent_id, or use [] for autonomous discovery when none is selected. If the selected requirement cannot fit the mandate, return no_work with explicit reason.\n'
-    if current_goal:context+='\nContinue this active goal; do not select a new requirement or unrelated backlog item: '+json.dumps(current_goal,ensure_ascii=False)+'\n'
-    if selected:context+='\nController-selected highest-priority confirmed requirement: '+json.dumps(selected,ensure_ascii=False)+'\nAddress this requirement only. Task intent_ids must be exactly [this id]. If it cannot be fulfilled within the envelope, return no_work and explain; do not substitute unrelated regression work.\n'
-    context+='\n'+instructions(mode['selection_mode'],items)+'\n'
+    if current_goal:context+='\nContinue this active goal; do not select a new requirement or unrelated backlog item: '+json.dumps(goal_summary({'product_goal':current_goal}),ensure_ascii=False)+'\n'
+    if selected:context+='\nController-selected highest-priority confirmed requirement: '+json.dumps({k:v for k,v in selected.items() if k in ('id','kind','title','body','priority','status','planning_reason')},ensure_ascii=False)+'\nAddress this requirement only. Task intent_ids must be exactly [this id]. If it cannot be fulfilled within the envelope, return no_work and explain; do not substitute unrelated regression work.\n'
+    context+='\n'+instructions(mode['selection_mode'],[] if selected or current_goal else items)+'\n'
     goal=('This is a test-only scheduler validation scope, not authorization for product implementation. Only propose a coherent regression slice supporting a concrete user outcome; if that outcome cannot be advanced meaningfully within this scope, return no_work.' if mandate.get('task_kind')=='test_only' else 'Advance one meaningful product outcome within the current project envelope. The requirement may be large; the Packet is its next coherent development slice, not a new unrelated requirement.')
-    prompt=context+GOAL_INSTRUCTIONS+'\n'+goal+' Return only JSON {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome"},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
+    prompt=context+GOAL_INSTRUCTIONS+'\n'+VALUE_INSTRUCTIONS+'\n'+goal+' Return only JSON {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value_assessment":{"material":true,"problem":"observed problem or evidenced risk","observable_gain":"verifiable improvement","why_now":"why this slice matters now"},"value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome"},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
     def fresh():
      if store:
       store.project_guard(lane)
@@ -218,7 +232,7 @@ def tick(lane):
       value={'action':'no_work','reason':report.get('recommendation','调研证据不足，暂不发起开发。')}
      else:value=None
     else:value=None
-    if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nVerified research brief: '+json.dumps(report,ensure_ascii=False),fresh,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
+    if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nVerified research brief: '+json.dumps(research_brief(report or (current_goal or {}).get('research')),ensure_ascii=False),fresh,validate=validate_value,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
     save(folder/'proposal.json',value)
     if value.get('action')=='goal_complete':
      if not store or not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
@@ -232,6 +246,8 @@ def tick(lane):
      store.finish_goal(lane,current_goal['id'],reason,evidence,revision)
      receipt.update(state='no_work',reason='产品目标已完成：'+reason);save(folder/'state.json',receipt)
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
+    if value.get('action')=='task' and isinstance(value.get('value_assessment'),dict) and value['value_assessment'].get('material') is False:
+     value={'action':'no_work','reason':value.get('reason') or value['value_assessment'].get('why_now') or '范围内没有有证据支持的实质进展。'}
     if value.get('action')=='task':
      if not current_goal and not selected and not value.get('backlog_item') and mandate.get('task_kind')!='test_only' and not any(s.get('kind')=='public' for s in (report or {}).get('sources',[])):
       value={'action':'no_work','reason':'新需求尚缺公开调研证据；不以模型推测发起开发。'}

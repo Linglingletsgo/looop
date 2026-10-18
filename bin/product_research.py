@@ -82,6 +82,14 @@ def verify(report,repo,public_required=False):
  return {**{k:report[k] for k in ('status','question','finding','counterevidence','recommendation')},'sources':[{k:v for k,v in s.items() if k in ('kind','path','url','quote','verified_source','sha256','retrieved_at')} for s in verified]}
 
 
+def brief(report):
+ """Decision evidence only; full provenance remains in the audit artifact."""
+ if not report:return None
+ result={k:report[k] for k in ('status','question','finding','counterevidence','recommendation') if k in report}
+ result['sources']=[{k:s[k] for k in ('kind','path','url','quote') if k in s} for s in report.get('sources',[])]
+ return result
+
+
 def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=None,public_required=False):
  available=catalog(repo,adapter)
  # Descriptions only in selection; full reviewed bytes are loaded for the chosen methods.
@@ -94,13 +102,13 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
   load_skills(repo,plan,available)
   for key in ('skill_reason','fallback_reason'):
    if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
- plan=invoke(run,repo,folder/'research-plan',phase+selection+'\n'+role_prompt+'\n'+context+'\n'+phase+selection,fresh,validate=validate_plan,role='readonly',execution_route=execution_route)
+ plan=invoke(run,repo,folder/'research-plan',phase+'\n'+role_prompt+'\n'+context+'\n'+selection,fresh,validate=validate_plan,role='readonly',execution_route=execution_route)
  skills=load_skills(repo,plan,available)
  plan={k:v for k,v in plan.items() if k in ('question','stop_condition','skills','skill_reason','fallback_reason')}
  for key in ('skill_reason','fallback_reason'):
   if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
  plan['skills']=[s['path'] for s in skills]
- prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps(plan,ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
+ prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps({k:plan[k] for k in ('question','stop_condition')},ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
  prompt+='\nConduct the research using real tools and permitted sources. Distinguish facts, inference and unknowns. Do not invent interviews, analytics, experiments or citations. No outreach, private data, payment or production access. '+('This is new requirement discovery: investigate public sources as well as current repository reality. ' if public_required else 'Validate the backlog/confirmed requirement against repository evidence; public research only when needed and permitted. ')
  prompt+='Return only JSON {"status":"supported|insufficient_evidence|rejected","question":"...","finding":"...","counterevidence":"...","recommendation":"...","skill_usage":[{"path":"...","impact":"method actually applied"}],"sources":[{"kind":"repository|public","path":"repo/file","url":"https://...","quote":"exact source quotation"}]}. When unavailable evidence prevents a conclusion, return insufficient_evidence with recommendation; never substitute a guessed requirement.'
  def validate_report(report):

@@ -45,7 +45,7 @@ class DefaultMethods(unittest.TestCase):
   prompts=[]
   def run(*args,**kwargs):prompts.append(args[2]);return json.dumps(responses.pop(0))
   value=research.perform(run,self.repo,self.repo/'run','PM','Backlog only',lambda:None,{'harness':'codex','provider':'codex'})
-  self.assertEqual(len(value['loaded_skills']),2);self.assertIn('Source count is not a proof threshold',prompts[1]);self.assertNotIn('Content not loaded',prompts[1]);self.assertNotIn('content',value['loaded_skills'][0])
+  self.assertEqual(prompts[0].count('Catalog: '),1);self.assertEqual(len(value['loaded_skills']),2);self.assertIn('Source count is not a proof threshold',prompts[1]);self.assertNotIn('Content not loaded',prompts[1]);self.assertNotIn('content',value['loaded_skills'][0])
 
  def test_wrong_phase_packet_is_corrected_before_any_research(self):
   calls=[]

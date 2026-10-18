@@ -183,18 +183,19 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False):
     if any(c['exit_code'] for c in checks):
      if policy.get('on_check_failure')=='stop':raise GateError('Test-only check failed; preserve evidence; Product disposition required')
      feedback=json.dumps(checks);continue
+    check_context='\nController check receipt: '+json.dumps({'target_sha':target,'checks':[{'argv':c['argv'],'exit_code':c['exit_code'],'output_tail':c['output'][-2000:]} for c in checks]},ensure_ascii=False)+'\nThese checks already ran on this exact target. Review the diff independently; run additional targeted checks when needed or required by project rules, rather than repeating the full suite solely for confirmation.\n'
     failed=False
     for step in policy['workflow']:
      if step['stage']!='review':continue
      mode=step.get('mode','standard');persist('review_'+mode)
-     rr,text=role(step,review,context+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. A private copy of candidate Git metadata is available. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
+     rr,text=role(step,review,context+check_context+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. A private copy of candidate Git metadata is available. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
      v=check_result(text);state['reviews'][mode]={**v,'mode':mode,'run_id':rr,'target_sha':target}
      if v['verdict']=='blocked':raise GateError('Review blocked: '+text)
      if v['verdict']!='approved':feedback=text;failed=True;break
     if failed:continue
     if any(s['stage']=='acceptance' for s in policy['workflow']):
      step=next(s for s in policy['workflow'] if s['stage']=='acceptance');persist('acceptance')
-     ar,text=role(step,review,context+'Independently verify acceptance criteria against target SHA '+target+' and available synthetic checks. Source visible; this is not black-box or production acceptance. Run permitted checks if useful. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[],"evidence":[]}.',metadata=candidate/'.git')
+     ar,text=role(step,review,context+check_context+'Independently verify acceptance criteria against target SHA '+target+' and available synthetic checks. Source visible; this is not black-box or production acceptance. Run permitted checks if useful. Return only JSON {"verdict":"approved|changes_requested|blocked","findings":[],"evidence":[]}.',metadata=candidate/'.git')
      av=check_result(text)
      if av['verdict']=='blocked':raise GateError('Acceptance blocked: '+text)
      if av['verdict']!='approved':feedback=text;continue
