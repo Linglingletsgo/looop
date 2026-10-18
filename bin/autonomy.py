@@ -21,6 +21,63 @@ def planning_state(shared,loop):
  intents={k:{n:v[n] for n in ('id','kind','status','title','body','target_task','supersedes') if n in v} for k,v in shared['intents'].items() if (v['status']=='ready' and v['kind']=='decision') or (v['status']=='waiting_decision' and v['kind']=='change')}
  return {'planning_revision':shared['planning_revision'],'intents':intents,'execution_control':{k:loop[k] for k in ('mode','selection_mode') if k in loop}}
 
+RESEARCH_RECHECK_SECONDS=15*60
+
+def recheck_at(previous,mode):
+ if mode!='continuous' or previous.get('state')=='queued':return None
+ # Old receipts predate evidence-aware planning and may be re-evaluated once.
+ if previous.get('planning_protocol')!=2:return 0
+ return previous.get('finished_at',previous.get('started_at',0))+RESEARCH_RECHECK_SECONDS
+
+def planning_evidence(root,lane,repo,sha,shared):
+ root=pathlib.Path(root);result={'baseline_sha':sha,'deliveries':[]}
+ def ancestor(target):
+  return isinstance(target,str) and subprocess.run(['git','merge-base','--is-ancestor',target,sha],cwd=repo,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
+ head=root/'data/mainline-verification'/(lane+'.json')
+ if head.exists():
+  value=json.loads(head.read_text())
+  if value.get('sha')==sha and value.get('status')=='passed':
+   result['mainline']={'sha':sha,'status':'passed','receipt_path':str(head),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in value.get('checks',[])]}
+ goal=active_goal(shared)
+ tasks=(shared or {}).get('tasks',{})
+ for job,t in tasks.items():
+  if not goal or t.get('goal_id')!=goal['id']:continue
+  folder=root/'data/deliveries'/job;path=folder/'state.json'
+  if not path.exists():continue
+  state=json.loads(path.read_text())
+  if state.get('state')!='merged' or not ancestor(state.get('mainline_verified')):continue
+  checks=folder/('checks-'+str(state['round'])+('-resume-'+str(state['review_resume_count']) if state.get('review_resume_count') else '')+'.json')
+  if not checks.exists():continue
+  rows=json.loads(checks.read_text())
+  if not rows or any(c['exit_code'] for c in rows):continue
+  result['deliveries'].append({'task_id':job,'target_sha':state['target_sha'],'mainline_verified':state['mainline_verified'],'receipt_path':str(checks),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in rows]})
+ result['goal_checks']=[]
+ for receipt in result['deliveries']:
+  for check in receipt['checks']:
+   if check['argv'] not in result['goal_checks']:result['goal_checks'].append(check['argv'])
+ result['deliveries']=result['deliveries'][-6:]
+ return result
+
+def verify_goal(root,lane,workspace,sha,evidence,policy):
+ checks=list(evidence.get('goal_checks',[]))
+ for receipt in [evidence.get('mainline',{}),*evidence['deliveries']]:
+  for check in receipt.get('checks',[]):
+   if check['argv'] not in checks:checks.append(check['argv'])
+ if not checks:return None
+ path=pathlib.Path(root)/'data/goal-verification'/(lane+'.json')
+ if path.exists():
+  old=json.loads(path.read_text())
+  if old.get('sha')==sha and old.get('status')=='passed' and [c['argv'] for c in old['checks']]==checks:return {'sha':sha,'status':'passed','receipt_path':str(path),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in old['checks']]}
+ from executor import command
+ results=[]
+ for argv in checks:
+  result=command(workspace,argv,dependencies=policy.get('dependencies'),timeout=None)
+  results.append({'argv':argv,'exit_code':result.returncode,'output':result.stdout[-12000:]})
+ value={'sha':sha,'status':'passed' if all(c['exit_code']==0 for c in results) else 'failed','verified_at':time.time(),'checks':results}
+ save(path,value)
+ if value['status']!='passed':raise ValueError('Current goal verification failed; inspect '+str(path)+' before further development')
+ return {'sha':sha,'status':'passed','receipt_path':str(path),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in results]}
+
 VALUE_INSTRUCTIONS="""Before dispatch, assess value against current code and verified evidence. Identify the concrete problem, observable gain and why this slice matters now. A missing test alone is not a defect or material improvement. Test work needs an evidenced failure/risk or a necessary contribution to the selected outcome. Bug fixes, reliability, security and infrastructure are valid outcomes. Do not claim user demand from coverage gaps or invent impact. If the allowed scope cannot deliver meaningful progress, return no_work. Assess materiality with problem, observable_gain and why_now; material=false means no dispatch. This assessment is a claim to support with evidence, not proof by itself."""
 
 def validate_value(value):
@@ -159,9 +216,16 @@ def tick(lane):
   history=[]
   for f in (ROOT/'data/autonomy'/lane).glob('*/state.json'):
    previous=json.loads(f.read_text())
-   if previous.get('interrupted_planning'):continue
-   if previous.get('state') in ('queued','no_work','rejected') and previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id and (not current_goal or previous.get('goal_id')==current_goal['id'] and previous.get('goal_completed_slices')==current_goal.get('completed_slices',0)):
-    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});finish_without_attempt(ROOT,lane,'该版本与需求状态已完成选题；不重复调用模型。');return
+   if previous.get('interrupted_planning') or mode['mode']=='continuous' and previous.get('goal_completed'):continue
+   if previous.get('state') in ('queued','no_work','rejected') and previous.get('baseline_sha')==sha and previous.get('planning_revision',0)==revision and previous.get('selected_intent')==selected_id and ((not current_goal and not previous.get('goal_id')) or current_goal and previous.get('goal_id')==current_goal['id'] and previous.get('goal_completed_slices')==current_goal.get('completed_slices',0)):
+    retry_at=recheck_at(previous,mode['mode'])
+    if retry_at is None:
+     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});finish_without_attempt(ROOT,lane,'该版本与需求状态已完成选题；不重复调用模型。');return
+    if retry_at>time.time():
+     reason='持续运行：本轮未选出合适任务，下一轮自动调研时间 '+datetime.datetime.fromtimestamp(retry_at,datetime.timezone.utc).isoformat()
+     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting','reason':reason,'next_research_at':retry_at,'sha':sha})
+     if store:store.selection(lane,'waiting',reason)
+     return
    if previous.get('fingerprint'):history.append(previous['fingerprint'])
   policy=json.loads((ROOT/'data/delivery-policies'/(lane+'.json')).read_text())
   if policy.get('scope_mode')!='task_paths' and not set(mandate.get('allowed_paths',[]))<=set(policy['allowed_paths']):raise ValueError('Mandate exceeds configured delivery scope')
@@ -172,9 +236,10 @@ def tick(lane):
    b=Board();owner=b.api('GET','/auth/get-session')['user']['id'];company=cfg.get('company',s.get('company'))
    job=uuid.uuid4().hex;folder=ROOT/'data/autonomy'/lane/job;folder.mkdir(parents=True,mode=0o700)
    claim(ROOT,lane,job)
-   receipt={'owner':identity(),'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
+   receipt={'owner':identity(),'planning_protocol':2,'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
    if current_goal:receipt.update(goal_id=current_goal['id'],goal_completed_slices=current_goal.get('completed_slices',0))
    save(folder/'state.json',receipt)
+   save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'discovering','reason':'持续循环：PM 正在核验当前目标并选择下一步。' if mode['mode']=='continuous' else 'PM 正在规划本次目标。','attempt':job,'at':time.time()})
    try:
     task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / '+('Backlog 选题' if mode['selection_mode']=='backlog_only' else 'Backlog 与需求调研'),'status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；没有价值则休眠，不为消耗token造任务。'})
    except Exception as exc:
@@ -219,8 +284,11 @@ def tick(lane):
     if continuation:context+='\nResume this unresolved research question against current code; preserve supported facts and investigate its stated gap before selecting another topic. Prior bounded research state (not new authority): '+json.dumps(continuation,ensure_ascii=False)+'\n'
     if selected:context+='\nController-selected highest-priority confirmed requirement: '+json.dumps({k:v for k,v in selected.items() if k in ('id','kind','title','body','priority','status','planning_reason')},ensure_ascii=False)+'\nAddress this requirement only. Task intent_ids must be exactly [this id]. If it cannot be fulfilled within the envelope, return no_work and explain; do not substitute unrelated regression work.\n'
     context+='\n'+instructions(mode['selection_mode'],[] if selected or current_goal else items)+'\n'
+    evidence=planning_evidence(ROOT,lane,repo,sha,store.read(lane) if store else shared)
+    if current_goal:evidence['goal_verification']=verify_goal(ROOT,lane,workspace,sha,evidence,policy)
+    context+='\nController-verified execution evidence: '+json.dumps(evidence,ensure_ascii=False)+'\nPM snapshots need not contain node_modules or database access. Read these controller receipts as execution evidence; do not infer missing validation from missing local tools. Earlier-SHA receipts prove only their recorded checks; inspect source changes before applying them to this baseline. Missing required current-SHA checks are explicit validation gaps, not evidence of product completion. Complete the active goal when every criterion has source and relevant execution proof, then the controller selects another goal. In continuous mode no_work ends only this investigation; research resumes automatically. Never manufacture tasks to keep busy.\n'
     goal=('This is a test-only scheduler validation scope, not authorization for product implementation. Only propose a coherent regression slice supporting a concrete user outcome; if that outcome cannot be advanced meaningfully within this scope, return no_work.' if mandate.get('task_kind')=='test_only' else 'Advance one meaningful product outcome within the current project envelope. The requirement may be large; the Packet is its next coherent development slice, not a new unrelated requirement.')
-    prompt=context+GOAL_INSTRUCTIONS+'\n'+VALUE_INSTRUCTIONS+'\n'+goal+' Return only JSON {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value_assessment":{"material":true,"problem":"observed problem or evidenced risk","observable_gain":"verifiable improvement","why_now":"why this slice matters now"},"value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome"},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. For goal_complete include at least one exact source proof for each existing success criterion; multiple proofs per criterion are allowed. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
+    prompt=context+GOAL_INSTRUCTIONS+'\n'+VALUE_INSTRUCTIONS+'\n'+goal+' Write handoff.json result {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value_assessment":{"material":true,"problem":"observed problem or evidenced risk","observable_gain":"verifiable improvement","why_now":"why this slice matters now"},"value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome"},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. For goal_complete include at least one exact source proof for each existing success criterion; multiple proofs per criterion are allowed. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
     def fresh():
      if store:
       store.project_guard(lane)
@@ -255,7 +323,7 @@ def tick(lane):
      reason=value.get('reason')
      if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
      store.finish_goal(lane,current_goal['id'],reason,evidence,revision)
-     receipt.update(state='no_work',reason='产品目标已完成：'+reason);save(folder/'state.json',receipt)
+     receipt.update(state='no_work',goal_completed=True,finished_at=time.time(),reason='产品目标已完成：'+reason);save(folder/'state.json',receipt)
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
     if value.get('action')=='task' and isinstance(value.get('value_assessment'),dict) and value['value_assessment'].get('material') is False:
      value={'action':'no_work','reason':value.get('reason') or value['value_assessment'].get('why_now') or '范围内没有有证据支持的实质进展。'}
@@ -270,9 +338,9 @@ def tick(lane):
       if store.read(lane)['planning_revision']!=revision:raise Conflict('External decisions changed during planning')
       if current_goal:store.wait_goal(lane,value['reason'],revision)
       elif selected:store.defer_intent(lane,selected_id,value['reason'],revision)
-     receipt['state']='no_work';receipt['reason']=value['reason'];save(folder/'state.json',receipt)
+     receipt['state']='no_work';receipt['finished_at']=time.time();receipt['reason']=value['reason'];save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',value['reason'])
-     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'PM判断无值得执行的范围内任务；本基线休眠。'+value['reason']});return
+     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'本轮未选出范围内任务；持续模式会自动再次调研。'+value['reason']});return
     packet,key=checked;validate(packet,policy)
     intent_ids=value.get('intent_ids',[])
     if not isinstance(intent_ids,list) or len(intent_ids)!=len(set(intent_ids)):raise ValueError('Invalid source intent_ids')
@@ -286,7 +354,7 @@ def tick(lane):
     receipt['fingerprint']=key
     if mandate.get('scope_approval','product')=='product':
      receipt['state']='product_scope_review';save(folder/'state.json',receipt)
-     review=context+'You are an independent Product scope approver under the user delegation above. You may approve only work within the explicit project envelope, with concrete value, source evidence, observable acceptance and no duplication. Do not expand the project envelope or approve weakening/skipping checks. Follow the project purpose and task_kind, including test-only restrictions when present. Verify PM evidence against code. Return only JSON {"verdict":"approved|rejected|blocked","findings":[],"reason":"..."}. Proposal:\n'+json.dumps(value,ensure_ascii=False)
+     review=context+'You are an independent Product scope approver under the user delegation above. You may approve only work within the explicit project envelope, with concrete value, source evidence, observable acceptance and no duplication. Do not expand the project envelope or approve weakening/skipping checks. Follow the project purpose and task_kind, including test-only restrictions when present. Verify PM evidence against code. Write handoff.json result {"verdict":"approved|rejected|blocked","findings":[],"reason":"..."}. Proposal:\n'+json.dumps(value,ensure_ascii=False)
      verdict=invoke(run,workspace,folder/'product',contract(registry,mandate['product_role'])+'\n'+review,fresh,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route);save(folder/'scope-review.json',verdict)
      if verdict.get('verdict')!='approved':
       receipt['state']='rejected' if verdict.get('verdict')=='rejected' else 'blocked';receipt['reason']=verdict.get('reason');save(folder/'state.json',receipt)
