@@ -55,3 +55,5 @@ PM first selects a bounded research question and relevant methods, then research
 The shared project state contains one `product_goal` (value, criteria, remaining work, progress, slice count) and the latest `research` brief. Each delivered slice keeps its requirement open; PM must verify every goal criterion before completion. Independent conversations see the same state through the exported tools. Self-reported manual progress stays labelled. Missing evidence stores a gap and dispatches no feature. Research and delivery use the configured real harness/plan; settings, project permissions and merge policy are unchanged. No default Acceptance stage or total runtime deadline is added.
 
 Open the project card to inspect the goal and **PM 调研**; task **证据** includes selected methods, versions and source quotations. The default pack includes CC BY-NC-SA 4.0 adaptations for personal noncommercial use alongside MIT methods; preserve their licenses. See [research selection](docs/pm-skills-research.md).
+
+Claude Code 接入 Command Code DeepSeek Flash：参见 [配置与使用](docs/commandcode-claude.md)。

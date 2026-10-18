@@ -4,7 +4,7 @@ from runtime import ROOT
 from provider_state import pause,paused
 
 HARNESS_IDS=('codex','claude','omp')
-COMPATIBILITY={'codex':('codex','commandcode'),'omp':('codex','commandcode'),'claude':('claude_subscription',)}
+COMPATIBILITY={'codex':('codex','commandcode'),'omp':('codex','commandcode'),'claude':('claude_subscription','commandcode')}
 FLASH='deepseek/deepseek-v4.1-flash'
 
 def execution_environment():
@@ -56,6 +56,11 @@ def invocation(workspace,scratch,execution_route):
  # Unattended jobs use only the selected subscription, never ambient paid API keys.
  for key in list(env):
   if key.endswith('_API_KEY') or key in ('ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','OPENAI_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'):env.pop(key,None)
+ if harness=='claude' and provider=='commandcode':
+  from commandcode_claude import environment,MODEL
+  env=environment(ROOT,env)
+  cmd=['claude','-p','--output-format','json','--no-session-persistence','--dangerously-skip-permissions','--permission-prompts','none','--model',MODEL]
+  return cmd,env,MODEL
  if provider=='claude_subscription':
   if not claude_subscription():raise RuntimeError('Claude Code subscription login required: claude auth login')
   model=execution_route.get('model')

@@ -36,6 +36,14 @@ class Settings(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'auth login'):settings.save(self.root,command,0,'no-login')
   with patch.object(settings,'claude_subscription',return_value=True):settings.save(self.root,command,0,'login')
 
+ def test_claude_commandcode_route_can_be_selected_without_claude_subscription(self):
+  (self.root/'secrets').mkdir();(self.root/'secrets/commandcode.key').write_text('PRIVATE')
+  command=self.command();command['stage_harnesses']={'review':'claude'};command['routes']['review']='commandcode'
+  with patch.object(settings,'claude_subscription',side_effect=AssertionError('No Claude subscription needed')):
+   settings.save(self.root,command,0,'claude-commandcode')
+  self.assertEqual(settings.route(settings.read(self.root),'review')['harness'],'claude')
+  self.assertEqual(settings.route(settings.read(self.root),'review')['provider'],'commandcode')
+
 class DeliveryRoutes(unittest.TestCase):
  setUp=test_delivery.Delivery.setUp
  tearDown=test_delivery.Delivery.tearDown

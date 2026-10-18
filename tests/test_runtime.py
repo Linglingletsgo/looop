@@ -19,11 +19,11 @@ class Runtime(unittest.TestCase):
     self.assertEqual(argv[0],harness);self.assertNotIn('fixture-secret',' '.join(argv));self.assertEqual(env['LOOOP_PROVIDER_KEY'],'fixture-secret');self.assertEqual(model,sandbox.FLASH);self.assertNotIn('bwrap',argv)
     if harness=='omp':
      for flag in ('--smol','--slow','--plan'):self.assertEqual(argv[argv.index(flag)+1],'commandcode/'+sandbox.FLASH)
- def test_native_claude_only_subscription_auth(self):
+ def test_native_claude_subscription_auth_is_separate(self):
   with tempfile.TemporaryDirectory() as d,patch.object(sandbox.shutil,'which',return_value='/cli'),patch.object(sandbox,'claude_subscription',return_value=True),patch.dict(os.environ,{'ANTHROPIC_API_KEY':'paid-api','ANTHROPIC_BASE_URL':'https://unapproved'}):
    argv,env,_=sandbox.invocation(d,pathlib.Path(d),{'harness':'claude','provider':'claude_subscription'})
    self.assertEqual(argv[0],'claude');self.assertIn('--no-session-persistence',argv);self.assertNotIn('ANTHROPIC_API_KEY',env);self.assertNotIn('ANTHROPIC_BASE_URL',env)
-   with self.assertRaises(ValueError):sandbox.invocation(d,pathlib.Path(d),{'harness':'claude','provider':'commandcode'})
+   with self.assertRaises(ValueError):sandbox.invocation(d,pathlib.Path(d),{'harness':'claude','provider':'codex'})
  def test_final_outputs_and_usage(self):
   text,usage=sandbox.final_text('omp',json.dumps({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'{}'}],'usage':{'input':12,'output':4}}}))
   self.assertEqual(text,'{}');self.assertEqual(usage['input_tokens'],12)
@@ -106,3 +106,15 @@ class Runtime(unittest.TestCase):
     self.assertIn(flag,process.call_args.args[0])
    text,_=sandbox.final_text('claude',json.dumps({'type':'result','result':'ignored prose','structured_output':{'verdict':'blocked','findings':['Missing evidence']}}))
    self.assertEqual(json.loads(text)['verdict'],'blocked')
+
+ def test_claude_commandcode_uses_private_bridge_and_fixed_model(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);folder=root/'data/commandcode-claude';folder.mkdir(parents=True);(folder/'client.key').write_text('PRIVATE-BRIDGE-KEY')
+   with patch.object(sandbox,'ROOT',root),patch.object(sandbox.shutil,'which',return_value='/cli'),patch.dict(os.environ,{'ANTHROPIC_API_KEY':'unwanted','ANTHROPIC_AUTH_TOKEN':'unwanted','CLAUDE_CODE_OAUTH_TOKEN':'unwanted','ANTHROPIC_BASE_URL':'https://unwanted'}),patch.object(sandbox,'claude_subscription',side_effect=AssertionError('Subscription must not be consulted')):
+    argv,env,model=sandbox.invocation(root,root,{'harness':'claude','provider':'commandcode','model':'unwanted-model'})
+   self.assertEqual(model,sandbox.FLASH)
+   self.assertIn(sandbox.FLASH,argv)
+   self.assertEqual(env['ANTHROPIC_BASE_URL'],'http://127.0.0.1:8318')
+   self.assertEqual(env['ANTHROPIC_API_KEY'],'PRIVATE-BRIDGE-KEY')
+   self.assertNotIn('ANTHROPIC_AUTH_TOKEN',env);self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN',env)
+   for name in ('HAIKU','SONNET','OPUS'):self.assertEqual(env['ANTHROPIC_DEFAULT_'+name+'_MODEL'],sandbox.FLASH)
