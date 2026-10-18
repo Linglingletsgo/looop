@@ -91,11 +91,13 @@ def brief(report):
  """Decision evidence only; full provenance remains in the audit artifact."""
  if not report:return None
  result={k:report[k] for k in ('status','question','finding','counterevidence','recommendation','next_step') if k in report}
+ if isinstance(result.get('next_step'),dict):result['next_step']={k:result['next_step'][k] for k in ('kind','detail') if k in result['next_step']}
+ if report.get('experiments'):result['experiments']=[{k:e[k] for k in ('purpose','argv','exit_code','evidence_path','script_sha256','source_fingerprint') if k in e} for e in report['experiments'][:2]]
  result['sources']=[{k:s[k] for k in ('kind','path','url','quote') if k in s} for s in report.get('sources',[])]
  return result
 
 
-def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=None,public_required=False):
+def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=None,public_required=False,dependencies=None):
  available=catalog(repo,adapter)
  # Descriptions only in selection; full reviewed bytes are loaded for the chosen methods.
  phase='RESEARCH PLAN ONLY. Project role describes the wider workflow; this call selects a discovery question and methods, not a task Packet. '
@@ -115,7 +117,8 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
  plan['skills']=[s['path'] for s in skills]
  prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps({k:plan[k] for k in ('question','stop_condition')},ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
  prompt+='\nConduct the research using real tools and permitted sources. Distinguish facts, inference and unknowns. Do not invent interviews, analytics, experiments or citations. No outreach, private data, payment or production access. '+('This is new requirement discovery: investigate public sources as well as current repository reality. ' if public_required else 'Validate the backlog/confirmed requirement against repository evidence; public research only when needed and permitted. ')
- prompt+='Write handoff.json result {"status":"supported|insufficient_evidence|rejected","question":"...","finding":"...","counterevidence":"...","recommendation":"...","skill_usage":[{"path":"...","impact":"method actually applied"}],"sources":[{"kind":"repository|public","path":"repo/file","url":"https://...","quote":"exact source quotation"}]}. Use at most 8 focused sources. Repository paths must name files without line-number suffixes. When evidence is insufficient, include next_step {kind: investigate|human_decision|wait_source, detail: specific missing evidence or decision}. Use investigate for permitted source reads still to perform; human_decision for a concrete product policy decision; wait_source for inaccessible external evidence. Never substitute a guessed requirement.'
+ prompt+='If runtime evidence is needed, request next_step kind experiment with detail and experiment {runtime: python|node|node_ts, purpose: concrete falsifiable question, script: complete script}. The controller runs it in a disposable copy with existing project dependencies and returns the actual exit code and bounded output. Use relative imports from the project root. Only synthetic inputs, fixed model stubs and in-memory receivers; no network, database, mail, external model, credential access, installations or source edits. Do not stop just because this read-only snapshot lacks node_modules; request the experiment instead. A probe is evidence gathering, never development authorization or proof by assertion. The controller does not interpret exit zero as a supported conclusion. '
+ prompt+='Write handoff.json result {"status":"supported|insufficient_evidence|rejected","question":"...","finding":"...","counterevidence":"...","recommendation":"...","skill_usage":[{"path":"...","impact":"method actually applied"}],"sources":[{"kind":"repository|public","path":"repo/file","url":"https://...","quote":"exact source quotation"}]}. Use at most 8 focused sources. Repository paths must name files without line-number suffixes. When evidence is insufficient, include next_step {kind: investigate|experiment|human_decision|wait_source, detail: specific missing evidence or decision}. Use investigate for permitted source reads still to perform; human_decision for a concrete product policy decision; wait_source for inaccessible external evidence. Never substitute a guessed requirement.'
  def validate_report(report):
   if not isinstance(report,dict) or report.get('status') not in ('supported','insufficient_evidence','rejected'):raise ValueError('Research requires an explicit evidence conclusion')
   for field in ('question','finding','counterevidence','recommendation'):
@@ -124,7 +127,10 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
   for skill in skills:
    if not any(isinstance(v,dict) and v.get('path')==skill['path'] and isinstance(v.get('impact'),str) and v['impact'].strip() and len(v['impact'])<=2000 for v in report['skill_usage']):raise ValueError('Research must explain the impact of each loaded skill')
   step=report.get('next_step')
-  if step is not None and (not isinstance(step,dict) or step.get('kind') not in ('investigate','human_decision','wait_source') or not isinstance(step.get('detail'),str) or not step['detail'].strip() or len(step['detail'])>2000):raise ValueError('Research next_step requires a kind and a concise concrete gap')
+  if step is not None and (not isinstance(step,dict) or step.get('kind') not in ('investigate','experiment','human_decision','wait_source') or not isinstance(step.get('detail'),str) or not step['detail'].strip() or len(step['detail'])>2000):raise ValueError('Research next_step requires a kind and a concise concrete gap')
+  if step and step.get('kind')=='experiment':
+   from research_experiment import validate as validate_experiment
+   validate_experiment(step.get('experiment'))
   if report['status']=='supported':
    sources=report.get('sources')
    if not isinstance(sources,list) or not 1<=len(sources)<=8:raise ValueError('Research requires attributable source evidence')
@@ -137,6 +143,7 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
      except ValueError as exc:raise ValueError('Repository source path must name an existing file, without line-number suffixes: '+name[:240]) from exc
     elif source.get('kind')!='public':raise ValueError('Unrecognized research source')
  original_prompt=prompt
+ experiments=[]
  for followup in range(3):
   target=folder/('research' if followup==0 else 'research-followup-'+str(followup))
   citation_prompt=prompt
@@ -155,9 +162,16 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
     if correction==2:raise
     citation_prompt=prompt+'\nCITATION CORRECTION: '+str(exc)+'. Re-read the named permitted source with real tools, and copy a short exact contiguous quotation. Keep the SAME research question and methods. Preserve other gathered evidence. This is evidence correction, not formatting-only repair: revise conclusions honestly if the source does not support them. Do not fabricate text or drop contrary evidence to force supported status. If evidence remains unavailable, report insufficient_evidence with a specific next_step. Do not implement or expand authority. Previous report (unverified claims, not source truth):\n'+json.dumps(report,ensure_ascii=False)[:32000]
   report={**report,'skill_usage':[{'path':s['path'],'impact':next(v['impact'] for v in usage if isinstance(v,dict) and v.get('path')==s['path'])} for s in skills],'plan':plan,'loaded_skills':[{k:v for k,v in s.items() if k!='content'} for s in skills],'followups':followup}
+  if experiments:report['experiments']=experiments
   save(folder/'research.json',report)
   if report['status']!='insufficient_evidence' or report.get('next_step',{}).get('kind') in ('human_decision','wait_source'):return report
+  experiment=None
+  if followup<2 and report.get('next_step',{}).get('kind')=='experiment':
+   from research_experiment import execute
+   experiment=execute(repo,folder/('experiment-'+str(followup+1)),report['next_step']['experiment'],dependencies,fresh)
+   experiments.append(experiment)
   if followup<2:
    fresh()
    prompt=original_prompt+'\nRESEARCH CONTINUATION: Continue the SAME question and stopping condition. Read the missing permitted sources with real tools now; the controller is executing your investigation request in this call. Preserve established facts, counterevidence and authority. This is research, not a format-only correction or permission to develop. If a real human policy decision or unavailable source prevents progress, state next_step accordingly. Previous bounded finding and gap:\n'+json.dumps(brief(report),ensure_ascii=False)
+   if experiment:prompt+='\nController-executed experiment receipt (observations only, not approval; interpret failures and counterevidence honestly): '+json.dumps(experiment,ensure_ascii=False)
  return report

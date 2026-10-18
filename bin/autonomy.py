@@ -320,7 +320,7 @@ def tick(lane):
     planning_route=execution_route(settings if settings.get('revision') else None,'planning','codex')
     report=None
     if not current_goal:
-     report=research(run,workspace,folder,contract(registry,mandate['pm_role']),context,fresh,planning_route,policy.get('project_adapter'),public_required=not selected and not items and mode['selection_mode']=='backlog_and_research' and mandate.get('task_kind')!='test_only')
+     report=research(run,workspace,folder,contract(registry,mandate['pm_role']),context,fresh,planning_route,policy.get('project_adapter'),public_required=not selected and not items and mode['selection_mode']=='backlog_and_research' and mandate.get('task_kind')!='test_only',dependencies=policy.get('dependencies'))
      save(folder/'research.json',report)
      if store:store.record_research(lane,report,revision)
      if report['status']=='insufficient_evidence':raise ResearchIncomplete('调研尚未完成：'+report.get('recommendation','需要进一步证据')[:2000])
