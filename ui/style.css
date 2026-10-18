@@ -21,3 +21,4 @@ dialog{color:var(--text);background:var(--panel);border:1px solid #333;border-ra
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .product-goal{border-top:1px solid var(--line);padding-top:16px;margin:16px 0}.product-goal h4{margin:0 0 8px}.product-goal ul{padding-left:20px}.product-goal details{margin-top:12px}
+.blocked-callout{border:1px solid #f5f5f5;border-left-width:3px;border-radius:6px;padding:16px;margin:16px 0;background:#171717}.blocked-callout strong{display:block;font-size:13px}.blocked-callout p{font-size:12px;color:#bdbdbd;overflow-wrap:anywhere}.primary{background:#f5f5f5;color:#111;border-color:#f5f5f5}.primary:hover:not(:disabled){background:#d4d4d4;border-color:#d4d4d4}.intervention-label{font-size:12px;color:#bdbdbd;margin-bottom:10px}.intervention-note{border-left:2px solid #f5f5f5;padding:12px;background:#171717}

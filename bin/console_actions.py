@@ -10,6 +10,8 @@ def retry(root,lane,task,reason,expected):
  if doc['revision']!=expected:raise Conflict('项目状态已更新，请刷新后重新判断。')
  item=doc['tasks'].get(task)
  if not item or item['phase']!='blocked':raise ValueError('只能重试当前项目的受阻任务。')
+ details=evidence(root,lane,task)
+ if not details['intervention']['retry_allowed']:raise ValueError(details['intervention']['unavailable_reason'])
  binding=json.loads((root/'data/delivery-bindings'/(task+'.json')).read_text())
  if binding['lane']!=lane:raise ValueError('Task/project mismatch')
  if len(reason.strip())<4:raise ValueError('请简要说明已处理什么，以及为什么可以重试。')
@@ -25,8 +27,10 @@ def evidence(root,lane,task):
  state_path=root/'data/deliveries'/task/'state.json';state=json.loads(state_path.read_text()) if state_path.exists() else {}
  research=item.get('evidence',{}).get('research') or {}
  brief={k:research[k] for k in ('status','question','finding','counterevidence','recommendation','skill_usage','loaded_skills','sources','source_gap') if k in research}
+ from intervention import describe
+ help=describe(root,lane,item,state,doc)
  # No raw logs/check output/environment dumps are exposed.
- return {'research':brief,'goal_id':item.get('goal_id'),'title':item.get('packet',{}).get('title',task),'phase':item['phase'],'requirements':item.get('packet',{}).get('requirements',[]),'acceptance':item.get('packet',{}).get('acceptance',[]),'allowed_paths':item.get('packet',{}).get('allowed_paths',[]),'holds':item.get('holds',[]),'evidence':{k:v for k,v in item.get('evidence',{}).items() if k in ('target_sha','pr_url','mainline_verified','error','merge_wait_reason','mainline_wait_reason')},'failed_stage':state.get('failed_stage'),'failure':{k:v for k,v in state.get('failure',{}).items() if k in ('category','retryable','next_action')},'retry_possible':item['phase']=='blocked' and not state.get('pr_url')}
+ return {'revision':doc['revision'],'intervention':help,'research':brief,'goal_id':item.get('goal_id'),'title':item.get('packet',{}).get('title',task),'phase':item['phase'],'requirements':item.get('packet',{}).get('requirements',[]),'acceptance':item.get('packet',{}).get('acceptance',[]),'allowed_paths':item.get('packet',{}).get('allowed_paths',[]),'holds':item.get('holds',[]),'evidence':{k:v for k,v in item.get('evidence',{}).items() if k in ('target_sha','pr_url','mainline_verified','error','merge_wait_reason','mainline_wait_reason')},'failed_stage':state.get('failed_stage'),'failure':{k:v for k,v in state.get('failure',{}).items() if k in ('category','retryable','next_action')},'retry_possible':help['retry_allowed']}
 
 def execute(value,root=ROOT):
  root=pathlib.Path(root);action=value.get('action')

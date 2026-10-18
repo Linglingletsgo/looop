@@ -34,5 +34,10 @@ try{
  response=await post(executor);assert.equal((await response.json()).result.replayed,true);
  assert.equal((await post({...executor,request_id:'stale-executor'})).status,409);
  assert.equal((await post({...executor,revision:1,request_id:'unsupported-harness',harness:'pi'})).status,422);
+ // A blocked task must expose an understandable intervention through the real HTTP child protocol.
+ execFileSync('/usr/bin/python3',['-c','import sys;sys.path.insert(0,sys.argv[1]);from project_state import Store;s=Store(sys.argv[2]);s.bind("fixture","blocked-task",{"title":"Format fixture"});s.transition("fixture","blocked-task","blocked",{"error":"Connection refused"})',root+'bin',fixture],{env:process.env});
+ response=await post({action:'evidence',lane:'fixture',task:'blocked-task'});assert.equal(response.status,200);value=(await response.json()).result;
+ assert.equal(value.intervention.category,'connection');assert.equal(value.retry_possible,false);assert.match(value.intervention.instruction,/网络/);assert.match(value.intervention.unavailable_reason,/缺少执行记录/);assert.match(value.intervention.diagnostic,/blocked-task/);assert.equal(typeof value.revision,'number');
+ const asset=await fetch(base+'/looop-assets/app.js',{headers:{'x-test-owner':'yes'}});assert.equal(asset.status,200);assert.match(await asset.text(),/处理受阻/);
  console.log('Disposable HTTP integration passed: owner auth, CSRF, real intent persistence/idempotency, revision conflict, no authority expansion, pause.');
 }finally{if(server)await new Promise(resolve=>server.close(resolve));await rm(fixture,{recursive:true,force:true});}
