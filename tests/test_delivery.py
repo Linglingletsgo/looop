@@ -174,7 +174,7 @@ class Delivery(unittest.TestCase):
   def broken(workspace,scratch,prompt,**kwargs):
    if scratch.name.startswith('reviewer-'):return 'No structured verdict'
    return self.harness(workspace,scratch,prompt,**kwargs)
-  with self.assertRaisesRegex(ValueError,'Return only one JSON'):self.execute(harness=broken)
+  with self.assertRaisesRegex(ValueError,'Handoff result requires'):self.execute(harness=broken)
   folder=self.root/'data/deliveries/task-one';old=json.loads((folder/'state.json').read_text())
   self.assertEqual(old['failure']['category'],'model_output');self.assertEqual(old['failed_stage'],'review_standard')
   calls=[];checks=[]
@@ -248,3 +248,24 @@ class Delivery(unittest.TestCase):
    return '{"verdict":"approved","findings":[]}'
   with self.assertRaisesRegex(GateError,'Builder blocked'):self.execute(harness=model)
   self.assertEqual(delivery.git(self.root/'data/deliveries/task-one/candidate','rev-parse','HEAD').decode().strip(),self.packet['baseline_sha'])
+
+ def test_missing_builder_handoff_repairs_only_artifact_without_rebuilding(self):
+  from output_protocol import OutputError
+  builds=[];repairs=[]
+  def model(workspace,scratch,prompt,**kwargs):
+   if kwargs['role']=='builder':
+    builds.append(scratch.name);(workspace/'app.py').write_text('value = 1\n');scratch.mkdir(parents=True,exist_ok=True);(scratch/'result.md').write_text('Implemented. Ready for checks.');raise OutputError('Handoff result missing required fields')
+   if '-handoff' in scratch.name:
+    repairs.append(scratch.name);self.assertEqual((workspace/'app.py').read_text(),'value = 1\n');self.assertIn('Do not implement',prompt)
+   return '{"verdict":"approved","findings":[],"summary":"Ready for checks"}'
+  result=self.execute(harness=model);self.assertEqual(result['state'],'validated');self.assertEqual(len(builds),1);self.assertEqual(len(repairs),1)
+  folder=self.root/'data/deliveries/task-one';self.assertTrue((folder/builds[0]/'repaired-result.json').exists());self.assertEqual((folder/builds[0]/'result.md').read_text(),'Implemented. Ready for checks.')
+ def test_builder_handoff_repair_preserves_blocker(self):
+  from output_protocol import OutputError
+  def model(workspace,scratch,prompt,**kwargs):
+   if kwargs['role']=='builder':
+    (workspace/'app.py').write_text('value = 1\n');raise OutputError('Missing handoff')
+   if '-handoff' in scratch.name:return '{"verdict":"blocked","findings":["Unresolved requirement"],"summary":"Cannot proceed"}'
+   return '{"verdict":"approved","findings":[]}'
+  with self.assertRaisesRegex(GateError,'Builder blocked'):self.execute(harness=model)
+  candidate=self.root/'data/deliveries/task-one/candidate';self.assertEqual(delivery.git(candidate,'rev-parse','HEAD').decode().strip(),self.packet['baseline_sha'])

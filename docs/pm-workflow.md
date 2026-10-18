@@ -26,9 +26,9 @@ Linux 验证：257 项 Python 测试与 HTTP 集成通过。独立夹具覆盖�
 
 ## 输出传输与已完成 Builder 的恢复
 
-交付角色由同一输出协议读取：纯 JSON 或唯一且无冲突的 JSON 围栏。围栏外有其它 JSON、明确审批/阻塞结论、多个围栏或损坏结构时不取最后一个、不猜 verdict、不默认通过。格式包装可以确定性消除，语义歧义仍需纠正。原始输出保留为 result.raw.md，规范产物仍经 verdict/findings 校验，业务 blocked/changes_requested 不被包装消除。
+阶段结果以每次执行的 handoff.json 为准。Agent 用文件工具写入 JSON，控制器校验后推进状态；聊天总结不参与解析。无效、缺失或含糊结论不能默认通过。
 
-Codex 使用 --output-schema，Claude Code 使用 --json-schema 并读取 structured_output；OMP 沿用原生调用及统一接收协议。原生结构约束目前用于交付阶段，PM 两阶段研究/提案仍有独立格式校验与有限纠正。已通过 Codex harness + Codex 订阅、Codex harness + Command Code Flash 的真实独立输出验证，不切换模型或付费路线。
+Codex、Claude Code、OMP 使用同一文件交接协议，不要求最终对话为 JSON，也不依赖原生最终响应约束。交接文件与自然语言报告分别保留。
 
 Builder 调用前记录 run_id、工作区和原候选 SHA。输出格式失败后，显式 resume_builder=True 只接收已停止、未发布、同 Packet/policy/基线/候选且文件变化在授权内的已完成工作区；必须能读取明确的 ready 结论。保留原产物并提交候选后，从全量配置检查和独立审核继续，不为纠正格式再次写代码。首次 Builder 失败也支持此恢复；无法判断真实结论时仍停止。新审核发现真实缺陷继续原有修改循环，不能以格式恢复绕过。
 
@@ -76,10 +76,12 @@ Builder 调用前记录 run_id、工作区和原候选 SHA。输出格式失败�
 
 ### 审核输出格式恢复
 
-只读交付角色的最终输出先经过 verdict 与 findings 结构校验；Markdown 围栏可正常解析，混杂解释文字、多份 JSON 或错误结构不会直接成为审批证据。沿用最多三次调用的恢复预算，纠正只针对格式，不改写明确的 blocked/changes_requested。每次调用前后都核验当前任务门禁与基线、目标提交；格式重试成功时，审核 run_id 指向实际成功那次调用的产物。
+只读交付角色的交接文件经过 verdict 与 findings 校验，业务 blocked/changes_requested 不会因格式纠正而改写。格式修复前后核验任务门禁、基线及目标提交。审核 run_id 指向实际成功写入文件的执行。
 
 显式 `delivery.execute(..., resume_review=True)` 仅恢复未发布、工作进程已退出的审核格式失败。核验原 Packet/policy、基线、候选提交、干净工作树、授权改动路径及恢复次数后，保留旧 state、Builder、检查与审核产物，从同一提交重跑检查和独立审核，不重跑 Builder。原生任务阻塞不能走此快捷恢复。恢复的新检查产物以 checks-<round>-resume-<n>.json 保存；合并控制器读取对应新产物，不能沿用旧检查。若新审核要求修改，则回到项目原有 Builder 循环。运行没有新增总时限，发布与合并仍受既有配置门禁控制。
 
 Linux 验证：251 项 Python 测试及 HTTP 集成通过，覆盖格式纠正、明确阻塞不重试、同提交恢复且 Builder 不重复、脏候选拒绝、共享状态恢复及新检查证据门禁。
 
 Research format corrections receive the prior bounded response so source evidence is not lost across fresh harness calls. An `insufficient_evidence` report continues the same question with up to two targeted read-only follow-ups; `human_decision` and `wait_source` stop immediately with an explicit planning blocker. A remaining gap is `research_incomplete`, never `no_work`: the owner can resolve it through the planning intervention entry, and the next attempt receives the bounded question and gap for the same baseline and planning revision. Rejected research and a genuine lack of valuable work remain idle outcomes. Source quotations, project guards and independent review are unchanged.
+
+所有调度阶段使用独立的 handoff.json 和 handoff.schema.json。控制器创建 version/run_id/nonce，Agent 只更新 result；文件必须通过严格 JSON、字段结构与执行身份校验。文件可被无 Paperclip 的外部对话读取；项目当前状态仍由控制器校验后同步，避免并发覆盖。Builder 漏写或写坏文件时，仅只读修复交接，不重做开发；自然语言保留在 result.md。产物沿用既有有界保留策略。

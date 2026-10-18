@@ -57,6 +57,19 @@ def check_result(text):
  from gates import verdict
  return verdict(text)
 
+def saved_result(report):
+ # Modern runs hand off through a file; legacy attempts retain their original transport.
+ repaired=report.parent/'repaired-result.json'
+ if repaired.is_file() and not repaired.is_symlink():return check_result(repaired.read_text())
+ path=report.parent/'handoff.json'
+ if path.exists() or path.is_symlink():
+  from handoff import read
+  schema=json.loads((report.parent/'handoff.schema.json').read_text())
+  identity={'version':1,'run_id':report.parent.name,'nonce':schema['properties']['nonce']['enum'][0]}
+  result=read(report.parent,delivery_schema('build'),identity)
+  return check_result(json.dumps(result,ensure_ascii=False))
+ return check_result(report.read_text())
+
 def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False):
  validate(packet,policy)
  if resume_review and resume_builder:raise GateError('Choose one resume stage')
@@ -85,7 +98,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     pending=old.get('pending_builder',{})
     if not re.fullmatch(r'[a-zA-Z0-9-]+',pending.get('run_id','')) or pending.get('workspace')!='build-'+str(old['round']) or pending.get('previous_target')!=target:raise GateError('Missing original Builder receipt')
     source=root/pending['workspace'];report=root/pending['run_id']/'result.md'
-    if check_result(report.read_text())['verdict']!='approved':raise GateError('Builder did not report ready; no format-only resume')
+    if saved_result(report)['verdict']!='approved':raise GateError('Builder did not report ready; no format-only resume')
     before=tree(candidate);after=tree(source)
     changes={n for n in before.keys()|after.keys() if before.get(n)!=after.get(n)}
     if not changes or not changes<=set(packet['allowed_paths']):raise GateError('Preserved Builder changes outside Packet scope')
@@ -114,13 +127,25 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    rid=step['role']+'-'+uuid.uuid4().hex[:12]
    full_prompt=contract(registry,step['role'])+'\n'+(project_context(baseline,policy['project_adapter'],step['role'],packet['allowed_paths']) if policy.get('project_adapter') else rules)+'\n'+prompt
    kwargs={'role':'builder' if step['stage']=='build' else 'readonly','provider_id':step.get('provider','codex'),'timeout':policy.get('timeout'),'git_metadata':metadata or candidate/'.git','dependencies':dependencies,'execution_route':execution_route(execution_settings,'planning' if step['stage']=='plan' else step['stage'],step.get('provider','codex'))}
-   kwargs['output_schema']=delivery_schema(step['stage'])
-   full_prompt+='\nFinal response uses the supplied schema. Each finding must retain severity, source location, evidence and required fix as one concise string. No additional prose outside the object.'
+   kwargs['handoff_schema']=delivery_schema(step['stage'])
+   full_prompt+='\nWrite the stage result to the supplied handoff.json file. Each finding must retain severity, source location, evidence and required fix as one concise string. Chat may be natural language.'
    if step['stage']=='build':
     state.setdefault('target_sha',git(candidate,'rev-parse','HEAD').decode().strip())
     state['pending_builder']={'run_id':rid,'workspace':workspace.name,'previous_target':git(candidate,'rev-parse','HEAD').decode().strip()}
     persist('building')
-    result=run(workspace,root/rid,full_prompt,**kwargs)
+    try:result=run(workspace,root/rid,full_prompt,**kwargs)
+    except (__import__('output_protocol').OutputError,json.JSONDecodeError) as exc:
+     from planning_runtime import invoke
+     repair=root/(rid+'-handoff')
+     repair_prompt='Repair ONLY this completed Builder handoff. Do not implement, edit project source, rerun checks, commit or publish. Read the original report files at '+str(root/rid)+' (handoff.json and result.md); preserve the actual verdict and all findings, including unresolved caveats. If no clear completion conclusion exists, report blocked rather than infer readiness. Write the result to your new handoff.json. Original Packet: '+json.dumps(packet,ensure_ascii=False)
+     def unchanged():
+      task_guard(ROOT,job)
+      if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved during Builder handoff repair')
+     options={**kwargs,'role':'readonly'}
+     result=json.dumps(invoke(run,workspace,repair,repair_prompt,unchanged,validate=lambda v:check_result(json.dumps(v)),**options),ensure_ascii=False)
+     # Keep the Builder identity/workspace receipt; save the independently validated handoff result.
+     from lifecycle import save
+     save(root/rid/'repaired-result.json',json.loads(result))
    else:
     from planning_runtime import invoke,InvalidOutput
     def checked_run(workspace,scratch,prompt,**options):
@@ -130,7 +155,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
       value=check_result(text)
       if 'findings' not in value:raise GateError('findings array required')
       return json.dumps(value,ensure_ascii=False)
-     except (ValueError,TypeError) as exc:raise InvalidOutput('Return only one JSON object with verdict approved|changes_requested|blocked and findings array; no surrounding prose') from exc
+     except (ValueError,TypeError) as exc:raise InvalidOutput('Handoff result requires verdict approved|changes_requested|blocked and findings array') from exc
     def fresh():
      task_guard(ROOT,job)
      if git(candidate,'rev-parse','HEAD').decode().strip()!=state.get('target_sha',sha):raise GateError('Review target changed')
@@ -140,11 +165,8 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     recovery=root/(rid+'-recovery.json')
     if recovery.exists():rid+='-retry-'+str(json.loads(recovery.read_text())['attempts']-1)
    normalized=json.dumps(check_result(result),ensure_ascii=False)
-   artifact=root/rid/'result.md'
-   if artifact.is_file() and artifact.read_text()!=normalized:
-    raw=artifact.with_name('result.raw.md')
-    if not raw.exists():raw.write_text(artifact.read_text())
-    artifact.write_text(normalized)
+   (root/rid).mkdir(parents=True,exist_ok=True)
+   (root/rid/'validated-result.json').write_text(normalized)
    return rid,normalized
   try:
    if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Builder output recovery without re-execution' if resume_builder else 'Review format recovery at unchanged target SHA'})
@@ -193,7 +215,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     update_target(state,git(candidate,'rev-parse','HEAD').decode().strip());state['builder_run']=pending['run_id']
     artifact=root/pending['run_id']/'result.md';raw=artifact.with_name('result.raw.md')
     if not raw.exists():raw.write_text(artifact.read_text())
-    artifact.write_text(json.dumps(check_result(artifact.read_text()),ensure_ascii=False))
+    (artifact.parent/'validated-result.json').write_text(json.dumps(saved_result(artifact),ensure_ascii=False))
    feedback='';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
    for roundno in range(resumed['round'] if resumed else 1,policy['max_rounds']+1):
     state['round']=roundno

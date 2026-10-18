@@ -101,14 +101,19 @@ def final_text(harness,events):
     for target,source in [('input_tokens','input'),('output_tokens','output'),('cached_input_tokens','cacheRead')]:usage[target]+=u.get(source,0)
  return result,usage
 
-def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None,output_schema=None):
+def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None,output_schema=None,handoff_schema=None):
  scratch=pathlib.Path(scratch).resolve();scratch.mkdir(parents=True,exist_ok=True,mode=0o700);scratch.chmod(0o700)
  route=execution_route or {'harness':'codex','provider':provider_id};provider=route['provider'];harness=route.get('harness','codex')
  if paused(ROOT,provider) is not None:raise RuntimeError('Provider unavailable/quota: paused; operator resume required')
  from repository import source_fingerprint
  before=source_fingerprint(workspace) if role!='builder' else None
  cmd,env,model=invocation(pathlib.Path(workspace).resolve(),scratch,route)
- if output_schema:
+ handoff_identity=None
+ if handoff_schema is not None:
+  from handoff import prepare,instruction
+  handoff_identity=prepare(scratch,handoff_schema)
+  prompt+=instruction(scratch)
+ if output_schema and handoff_schema is None:
   if harness=='codex':
    schema_path=scratch/'output-schema.json';schema_path.write_text(json.dumps(output_schema));cmd[-1:-1]=['--output-schema',str(schema_path)]
   elif harness=='claude':cmd+=['--json-schema',json.dumps(output_schema)]
@@ -163,10 +168,13 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
   result=path.read_text() if path.is_file() else ''
  else:(scratch/'result.md').write_text(result)
  (scratch/'usage.json').write_text(json.dumps({'harness':harness,'provider':provider,'model':model,**usage,'remaining':'unknown'},indent=2))
- if proc.returncode or not result:
+ if proc.returncode or (not result and handoff_identity is None):
   # CLI formats differ; only explicit HTTP status evidence pauses a provider.
   status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+)(401|402|403|429)\b',events,re.I)
   if status:
    pause(ROOT,provider,int(status[1]),None);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
   raise RuntimeError('Harness failed; inspect owner-only events.jsonl')
+ if handoff_identity is not None:
+  from handoff import read
+  return json.dumps(read(scratch,handoff_schema,handoff_identity),ensure_ascii=False)
  return result
