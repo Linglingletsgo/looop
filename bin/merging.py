@@ -14,14 +14,15 @@ def eligibility(folder,state,binding,policy,pr):
    if step['stage']!='review':continue
    mode=step.get('mode','standard');evidence=state['reviews'].get(mode,{})
    if evidence.get('verdict')!='approved' or evidence.get('target_sha')!=state['target_sha']:raise GateError('Review missing or stale')
-   from gates import verdict
+   from delivery import saved_result
    report=pathlib.Path(folder)/evidence['run_id']/'result.md'
-   if verdict(report.read_text()).get('verdict')!='approved':raise GateError('Reviewer report not approved')
+   if saved_result(report,'review').get('verdict')!='approved':raise GateError('Reviewer report not approved')
  else:
   if not state.get('acceptance',{}).get('run_id'):raise GateError('Acceptance run missing')
   if steps[-1]['stage']!='acceptance' or steps[-1]['role']!=policy.get('acceptance_role'):raise GateError('Final acceptance is not the configured Product role')
   run=pathlib.Path(folder)/state['acceptance']['run_id']
-  result=json.loads((run/'result.md').read_text())
+  from delivery import saved_result
+  result=saved_result(run/'result.md','acceptance')
   if result.get('verdict')!='approved':raise GateError('Product report is not approved')
  checks_name='checks-'+str(state['round'])+('-resume-'+str(state['review_resume_count']) if state.get('review_resume_count') else '')+'.json'
  checks=json.loads((pathlib.Path(folder)/checks_name).read_text())

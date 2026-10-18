@@ -33,3 +33,37 @@ class ProductMerge(unittest.TestCase):
   with self.assertRaises(GateError):self.check()
   (self.root/'checks-1.json').write_text('[{"argv":["node","test"],"exit_code":0}]');(self.root/'product-run/result.md').write_text('{"verdict":"changes_requested"}')
   with self.assertRaises(GateError):self.check()
+
+ def modern_report(self,stage='review'):
+  from handoff import prepare
+  from output_protocol import delivery_schema
+  if stage=='review':
+   self.binding['policy']['workflow']=[{'stage':'build','role':'builder'},{'stage':'review','role':'reviewer'}]
+   self.policy={'mode':'review_approved','github_repo':'test/repo','review_role':'reviewer'}
+   run=self.root/'reviewer';run.mkdir()
+  else:run=self.root/'product-run'
+  identity=prepare(run,delivery_schema(stage))
+  result={'verdict':'approved','findings':[]}
+  if stage=='acceptance':result['evidence']=['verified']
+  (run/'handoff.json').write_text(json.dumps({**identity,'result':result}))
+  (run/'result.md').write_text('Review completed. See the structured handoff file.')
+  return run
+ def test_modern_review_and_acceptance_ignore_dialogue(self):
+  for stage in ('acceptance','review'):
+   with self.subTest(stage=stage):
+    self.modern_report(stage)
+    self.assertTrue(self.check())
+ def test_modern_identity_or_missing_file_cannot_fall_back_to_chat(self):
+  run=self.modern_report()
+  (run/'result.md').write_text('{"verdict":"approved"}')
+  doc=json.loads((run/'handoff.json').read_text());doc['run_id']='different-run'
+  (run/'handoff.json').write_text(json.dumps(doc))
+  with self.assertRaises(ValueError):self.check()
+  (run/'handoff.json').unlink()
+  with self.assertRaises(ValueError):self.check()
+ def test_modern_nonapproval_overrides_chat(self):
+  run=self.modern_report()
+  doc=json.loads((run/'handoff.json').read_text());doc['result']['verdict']='changes_requested'
+  (run/'handoff.json').write_text(json.dumps(doc))
+  (run/'result.md').write_text('{"verdict":"approved"}')
+  with self.assertRaises(GateError):self.check()

@@ -4,6 +4,10 @@ from board import ROOT,Board
 from lifecycle import save
 from health import progress
 
+def scope_description(mandate):
+ if mandate.get('allowed_paths') is not None:return '允许文件：'+', '.join(mandate['allowed_paths'])
+ return '允许文件：由当前任务 Packet 确定，并执行项目范围检查'
+
 def report(lane):
  s=json.loads((ROOT/'data/control.json').read_text());cfg=s['projects'][lane];b=Board();rows=['# 自动队列状态','范围：既有行为的合成回归；PM定义契约 → Builder → 检查 → Reviewer → 按项目配置的发布/合并 → 主线复验。Acceptance仅在项目workflow显式配置时执行。','不按总时长终止；15分钟无事件只提示。']
  from project_state import configured_store
@@ -17,7 +21,7 @@ def report(lane):
  policy=ROOT/'data/autonomy-policies'/(lane+'.json')
  if policy.exists():
   from loop_control import view
-  loop=view(ROOT,lane);m=json.loads(policy.read_text());rows+=['循环模式：'+loop['mode']+'；'+loop.get('reason',''),'允许文件：'+', '.join(m['allowed_paths']),('自主发现每天不限次数' if loop['limits']['max_proposals_per_day'] is None else '自主发现每天最多 '+str(loop['limits']['max_proposals_per_day'])+' 次')+'；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
+  loop=view(ROOT,lane);m=json.loads(policy.read_text());rows+=['循环模式：'+loop['mode']+'；'+loop.get('reason',''),scope_description(m),('自主发现每天不限次数' if loop['limits']['max_proposals_per_day'] is None else '自主发现每天最多 '+str(loop['limits']['max_proposals_per_day'])+' 次')+'；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
  from provider_state import paused
  for provider in ('codex','commandcode'):
   pause=paused(ROOT,provider)

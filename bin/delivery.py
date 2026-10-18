@@ -57,16 +57,16 @@ def check_result(text):
  from gates import verdict
  return verdict(text)
 
-def saved_result(report):
+def saved_result(report,stage='build'):
  # Modern runs hand off through a file; legacy attempts retain their original transport.
  repaired=report.parent/'repaired-result.json'
  if repaired.is_file() and not repaired.is_symlink():return check_result(repaired.read_text())
  path=report.parent/'handoff.json'
- if path.exists() or path.is_symlink():
+ if path.exists() or path.is_symlink() or (report.parent/'handoff.schema.json').exists():
   from handoff import read
   schema=json.loads((report.parent/'handoff.schema.json').read_text())
   identity={'version':1,'run_id':report.parent.name,'nonce':schema['properties']['nonce']['enum'][0]}
-  result=read(report.parent,delivery_schema('build'),identity)
+  result=read(report.parent,delivery_schema(stage),identity)
   return check_result(json.dumps(result,ensure_ascii=False))
  return check_result(report.read_text())
 
