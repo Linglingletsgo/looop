@@ -1,5 +1,5 @@
 """Durable delivery receipts, failure categories, and isolated mainline verification."""
-import datetime,fcntl,hashlib,importlib.util,json,pathlib,subprocess,time
+import datetime,fcntl,hashlib,importlib.util,json,pathlib,re,subprocess,time
 from repository import git,snapshot
 from executor import command
 from roles import resolve,fingerprints
@@ -10,7 +10,8 @@ def save(path,value):
 
 def failure(exc):
  text=str(exc).lower()
- if 'quota' in text or 'provider unavailable' in text:return {'category':'provider_paused','next_action':'核验订阅额度/认证后显式恢复；不切换付费路线','retryable':False}
+ if 'quotation not found' in text:return {'category':'research_evidence','next_action':'查看引文纠正记录，核对对应来源后重新规划；不跳过证据检查','retryable':False}
+ if re.search(r'\bquota\b',text) or 'provider unavailable' in text:return {'category':'provider_paused','next_action':'核验订阅额度/认证后显式恢复；不切换付费路线','retryable':False}
  if any(s in text for s in ('connection reset','connection refused','remote end closed','temporary failure','network is unreachable','model connection failed')):return {'category':'connection','next_action':'连接恢复后可有限重试，重新执行全部门禁','retryable':True}
  if any(s in text for s in ('baseline','workflow','scope','role','outside packet')):return {'category':'scope_or_baseline','next_action':'检查基线/授权/规则，形成新 Packet；不自动扩权','retryable':False}
  if any(s in text for s in ('round limit','review blocked','acceptance blocked','planning blocked','builder blocked','product disposition')):return {'category':'product_disposition','next_action':'Product 判断需求、缺陷或验收阻塞；不重复同一失败','retryable':False}

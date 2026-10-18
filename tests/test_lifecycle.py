@@ -4,6 +4,10 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 from lifecycle import failure,terminal
 from health import progress,reconcile
 class Lifecycle(unittest.TestCase):
+ def test_quotation_failure_is_not_subscription_quota(self):
+  self.assertEqual(failure('Research quotation not found in independently read source: spec.md')['category'],'research_evidence')
+  self.assertEqual(failure('Provider quota exceeded')['category'],'provider_paused')
+
  def test_failure_dispositions(self):
   self.assertTrue(failure('Connection reset by peer')['retryable'])
   for e in ['Provider unavailable/quota','Baseline moved','Round limit reached','Harness failed']:
