@@ -4,7 +4,7 @@ from runtime import ROOT
 from provider_state import pause,paused
 
 HARNESS_IDS=('codex','claude','omp')
-COMPATIBILITY={'codex':('codex','commandcode'),'omp':('codex','commandcode'),'claude':('claude_subscription','commandcode')}
+COMPATIBILITY={'codex':('codex','commandcode','magpie_chatgpt','magpie_deepseek'),'omp':('codex','commandcode','magpie_chatgpt','magpie_deepseek'),'claude':('claude_subscription','commandcode','magpie_chatgpt','magpie_deepseek')}
 FLASH='deepseek/deepseek-v4.1-flash'
 
 def execution_environment():
@@ -67,13 +67,23 @@ def invocation(workspace,scratch,execution_route):
   cmd=['claude','-p','--output-format','json','--no-session-persistence','--dangerously-skip-permissions','--permission-prompts','none']
   if model:cmd+=['--model',model]
   return cmd,env,model
- if provider=='codex':
+ if provider in ('magpie_chatgpt','magpie_deepseek'):
+  from magpie_provider import selected
+  base,token,model=selected(provider,execution_route.get('model'))
+ elif provider=='codex':
   config=tomllib.loads((pathlib.Path.home()/'.codex/config.toml').read_text());p=config['model_providers'][config['model_provider']]
-  if p.get('base_url')!='http://127.0.0.1:8317/v1':raise RuntimeError('Configure existing CLIProxyAPI subscription route first')
+  if p.get('base_url') not in ('http://127.0.0.1:8317/v1','http://127.0.0.1:3425/v1'):raise RuntimeError('Configure the local subscription gateway in Linux Codex first')
   token=p.get('experimental_bearer_token');base=p['base_url'];model=execution_route.get('model') or config['model']
+  if base=='http://127.0.0.1:3425/v1':
+   from magpie_provider import selected
+   base,token,model=selected('magpie_chatgpt',model)
  else:
   token=(ROOT/'secrets/commandcode.key').read_text().strip();base='https://api.commandcode.ai/provider/v1';model=FLASH
  if not token:raise RuntimeError('Subscription credential unavailable')
+ if harness=='claude':
+  from magpie_provider import claude_environment
+  env=claude_environment(env,base,token,model)
+  return ['claude','-p','--output-format','json','--no-session-persistence','--dangerously-skip-permissions','--permission-prompts','none','--model',model],env,model
  env['LOOOP_PROVIDER_KEY']=token
  if harness=='codex':
   cmd=['codex','exec','--skip-git-repo-check','--ephemeral','--dangerously-bypass-approvals-and-sandbox','--json','-C',str(workspace),'-m',model,'-c','model_provider="looop-subscription"','-c','model_providers.looop-subscription='+json.dumps({'name':'Selected subscription','base_url':base,'wire_api':'responses','env_key':'LOOOP_PROVIDER_KEY'}).replace(': ', ' = '),'-o',str(scratch/'result.md'),'-']

@@ -9,7 +9,7 @@ def status():
   print('\n'+c['name'])
   for t in b.api('GET',f'/companies/{c["id"]}/issues'):
    print(t['identifier'],t['status'],t['title'])
- for name in ['codex','commandcode']:
+ for name in ['codex','commandcode','magpie_chatgpt','magpie_deepseek']:
   p=ROOT/'data'/('quota-'+name+'.json');print(name,'PAUSED '+p.read_text() if p.exists() else 'available; subscription remaining unknown')
 
 def onboard(repo,name,lane):

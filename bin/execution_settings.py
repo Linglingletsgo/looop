@@ -3,6 +3,7 @@ import fcntl,json,pathlib,re,shutil,tomllib
 from runtime import ROOT
 from sandbox import HARNESS_IDS,COMPATIBILITY,claude_subscription
 from project_state import Conflict
+from magpie_provider import PLANS as MAGPIE_PLANS,configured as magpie_configured
 
 STAGES=('planning','build','review','acceptance','advisory')
 DEFAULTS={'planning':'codex','build':'commandcode','review':'codex','acceptance':'codex','advisory':'codex'}
@@ -16,18 +17,19 @@ def public(root=ROOT):
  try:model=tomllib.loads((pathlib.Path.home()/'.codex/config.toml').read_text()).get('model')
  except (OSError,ValueError):pass
  value={k:v for k,v in value.items() if k in ('revision','harness','routes','codex_model','stage_harnesses')}
- return {**value,'inherited_codex_model':model,'compatibility':COMPATIBILITY,'harnesses':[{'id':n,'available':bool(shutil.which(n)),'installed':bool(shutil.which(n))} for n in HARNESS_IDS],'plans':[{'id':'codex','configured':(pathlib.Path.home()/'.codex/config.toml').is_file()},{'id':'commandcode','configured':(pathlib.Path(root)/'secrets/commandcode.key').is_file(),'model':'deepseek/deepseek-v4.1-flash'},{'id':'claude_subscription','configured':claude_subscription()}]}
+ return {**value,'inherited_codex_model':model,'compatibility':COMPATIBILITY,'harnesses':[{'id':n,'available':bool(shutil.which(n)),'installed':bool(shutil.which(n))} for n in HARNESS_IDS],'plans':[{'id':'codex','configured':(pathlib.Path.home()/'.codex/config.toml').is_file()},{'id':'commandcode','configured':(pathlib.Path(root)/'secrets/commandcode.key').is_file(),'model':'deepseek/deepseek-v4.1-flash'},{'id':'claude_subscription','configured':claude_subscription()},*({'id':plan,'configured':magpie_configured()} for plan in MAGPIE_PLANS)]}
 
 def save(root,value,expected,request_id):
  if value.get('harness') not in HARNESS_IDS:raise ValueError('请选择 Codex、Claude Code 或 OMP。')
  routes=value.get('routes')
- if not isinstance(routes,dict) or set(routes)!=set(STAGES) or any(p not in ('codex','commandcode','claude_subscription') for p in routes.values()):raise ValueError('每个阶段请选择已支持的 Token Plan。')
+ if not isinstance(routes,dict) or set(routes)!=set(STAGES) or any(p not in ('codex','commandcode','claude_subscription',*MAGPIE_PLANS) for p in routes.values()):raise ValueError('每个阶段请选择已支持的 Token Plan。')
  stages=value.get('stage_harnesses',{})
  if not isinstance(stages,dict) or set(stages)-set(STAGES) or any(h not in HARNESS_IDS for h in stages.values()):raise ValueError('阶段 Harness 无效。')
  for stage,provider in routes.items():
   harness=stages.get(stage,value['harness'])
   if provider not in COMPATIBILITY[harness]:raise ValueError('Harness 与 Token Plan 不兼容：'+stage)
  if 'claude_subscription' in routes.values() and not claude_subscription():raise ValueError('请先在 Linux 执行 claude auth login，登录订阅账户。')
+ if any(p in MAGPIE_PLANS for p in routes.values()) and not magpie_configured():raise ValueError('请先在 Linux 配置 Magpie 本地网关及凭据。')
  model=value.get('codex_model') or None
  if model is not None and (not isinstance(model,str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,100}',model)):raise ValueError('模型名称格式无效。')
  if not isinstance(request_id,str) or not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,120}',request_id):raise ValueError('Stable request id required')
@@ -48,4 +50,4 @@ def save(root,value,expected,request_id):
 def route(settings,stage,fallback='codex'):
  if not settings:return {'harness':'codex','provider':fallback,'model':None}
  provider=settings.get('routes',{}).get(stage,fallback)
- return {'harness':settings.get('stage_harnesses',{}).get(stage,settings.get('harness','codex')),'provider':provider,'model':settings.get('codex_model') if provider=='codex' else None}
+ return {'harness':settings.get('stage_harnesses',{}).get(stage,settings.get('harness','codex')),'provider':provider,'model':settings.get('codex_model') if provider in ('codex','magpie_chatgpt') else None}
