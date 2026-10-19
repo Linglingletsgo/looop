@@ -14,6 +14,7 @@ from planning_intervention import unresolved,blocked_patch
 from product_goals import completion_coverage
 from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS,summary as goal_summary
 from product_research import perform as research,brief as research_brief,ResearchIncomplete
+from research_evidence import proposal_supported
 from task_selection import backlog_sources,backlog_items,check_source,instructions
 
 def planning_state(shared,loop):
@@ -320,7 +321,7 @@ def tick(lane):
     planning_route=execution_route(settings if settings.get('revision') else None,'planning','codex')
     report=None
     if not current_goal:
-     report=research(run,workspace,folder,contract(registry,mandate['pm_role']),context,fresh,planning_route,policy.get('project_adapter'),public_required=not selected and not items and mode['selection_mode']=='backlog_and_research' and mandate.get('task_kind')!='test_only',dependencies=policy.get('dependencies'))
+     report=research(run,workspace,folder,contract(registry,mandate['pm_role']),context,fresh,planning_route,policy.get('project_adapter'),public_required=not selected and not items and mode['selection_mode']=='backlog_and_research' and mandate.get('task_kind')!='test_only',dependencies=policy.get('dependencies'),checkpoint=next((p.get('research_checkpoint') for p in reversed(pending) if p.get('research_checkpoint') and p.get('planning_revision')==revision and p.get('selected_intent')==selected_id and p.get('baseline_sha')==sha),None))
      save(folder/'research.json',report)
      if store:store.record_research(lane,report,revision)
      if report['status']=='insufficient_evidence':raise ResearchIncomplete('调研尚未完成：'+report.get('recommendation','需要进一步证据')[:2000])
@@ -333,7 +334,7 @@ def tick(lane):
      if value.get('action')=='goal_complete':
       if not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
       completion_coverage(value.get('completion_evidence'),current_goal['success_criteria'])
-    if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nVerified research brief: '+json.dumps(research_brief(report or (current_goal or {}).get('research')),ensure_ascii=False),fresh,validate=validate_pm,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
+    if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nThe research phase has ended. If supported, now define the implementation Packet within the mandate; an earlier investigation-only stopping condition does not require another planning cycle. Use controller experiment receipts as observations, not merge approval.\nVerified research brief: '+json.dumps(research_brief(report or (current_goal or {}).get('research')),ensure_ascii=False),fresh,validate=validate_pm,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
     save(folder/'proposal.json',value)
     if value.get('action')=='goal_complete':
      if not store or not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
@@ -350,7 +351,7 @@ def tick(lane):
     if value.get('action')=='task' and isinstance(value.get('value_assessment'),dict) and value['value_assessment'].get('material') is False:
      value={'action':'no_work','reason':value.get('reason') or value['value_assessment'].get('why_now') or '范围内没有有证据支持的实质进展。'}
     if value.get('action')=='task':
-     if not current_goal and not selected and not value.get('backlog_item') and mandate.get('task_kind')!='test_only' and not any(s.get('kind')=='public' for s in (report or {}).get('sources',[])):
+     if not current_goal and not selected and not value.get('backlog_item') and mandate.get('task_kind')!='test_only' and not proposal_supported(report):
       value={'action':'no_work','reason':'新需求尚缺公开调研证据；不以模型推测发起开发。'}
      else:value['product_goal']=goal_proposal(value.get('product_goal'),current_goal)
     receipt['backlog_item_key']=current_goal.get('backlog_item_key') if current_goal else check_source(value,mode['selection_mode'],selected,items)

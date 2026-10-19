@@ -9,8 +9,10 @@ def save(path,value):
  tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2));tmp.chmod(0o600);tmp.replace(path)
 
 def failure(exc):
+ from research_evidence import EvidenceGap
+ if isinstance(exc,EvidenceGap):return {'category':'research_evidence','next_action':'按证据纠正回执补齐公开来源或当前源码实验，再重新规划；不跳过核验','retryable':False}
  text=str(exc).lower()
- if 'quotation not found' in text:return {'category':'research_evidence','next_action':'查看引文纠正记录，核对对应来源后重新规划；不跳过证据检查','retryable':False}
+ if any(s in text for s in ('needs public research','requires verified repository sources','quotation not found')):return {'category':'research_evidence','next_action':'查看引文纠正记录，核对对应来源后重新规划；不跳过证据检查','retryable':False}
  if re.search(r'\bquota\b',text) or 'provider unavailable' in text:return {'category':'provider_paused','next_action':'核验订阅额度/认证后显式恢复；不切换付费路线','retryable':False}
  if any(s in text for s in ('connection reset','connection refused','remote end closed','temporary failure','network is unreachable','model connection failed')):return {'category':'connection','next_action':'连接恢复后可有限重试，重新执行全部门禁','retryable':True}
  if any(s in text for s in ('baseline','workflow','scope','role','outside packet')):return {'category':'scope_or_baseline','next_action':'检查基线/授权/规则，形成新 Packet；不自动扩权','retryable':False}

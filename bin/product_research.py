@@ -4,6 +4,7 @@ from project_adapter import safe_file
 from planning_runtime import invoke
 from runtime import CODE_ROOT
 from lifecycle import save
+from research_evidence import KINDS,EvidenceGap,basis
 
 class ResearchIncomplete(ValueError):pass
 
@@ -62,7 +63,7 @@ def fetch(url):
 def normalize(value):return ' '.join(html.unescape(re.sub('<[^>]+>',' ',value)).split())
 
 
-def verify(report,repo,public_required=False):
+def verify(report,repo,public_required=False,kind="new_requirement",experiments=()):
  if not isinstance(report,dict) or report.get('status') not in ('supported','insufficient_evidence','rejected'):raise ValueError('Research requires an explicit evidence conclusion')
  for field in ('question','finding','counterevidence','recommendation'):
   if not isinstance(report.get(field),str) or not report[field].strip() or len(report[field])>5000:raise ValueError('Research requires '+field)
@@ -83,41 +84,44 @@ def verify(report,repo,public_required=False):
   else:raise ValueError('Unrecognized research source')
   if normalize(quote) not in normalize(content):raise CitationMismatch('Research quotation not found in independently read source: '+str(address)[:240])
   verified.append({**source,'verified_source':address,'retrieved_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sha256':hashlib.sha256(content.encode()).hexdigest()})
- if public_required and not public:raise ValueError('New requirement discovery needs public research, not model speculation alone')
- return {**{k:report[k] for k in ('status','question','finding','counterevidence','recommendation')},'sources':[{k:v for k,v in s.items() if k in ('kind','path','url','quote','verified_source','sha256','retrieved_at')} for s in verified]}
+ evidence_basis=basis({'sources':verified},kind,public_required,experiments,report.get('defect_evidence'))
+ return {'evidence_basis':evidence_basis,**{k:report[k] for k in ('status','question','finding','counterevidence','recommendation','defect_evidence') if k in report},'sources':[{k:v for k,v in s.items() if k in ('kind','path','url','quote','verified_source','sha256','retrieved_at')} for s in verified]}
 
 
 def brief(report):
  """Decision evidence only; full provenance remains in the audit artifact."""
  if not report:return None
- result={k:report[k] for k in ('status','question','finding','counterevidence','recommendation','next_step') if k in report}
+ result={k:report[k] for k in ('status','question','finding','counterevidence','recommendation','next_step','evidence_basis','defect_evidence') if k in report}
  if isinstance(result.get('next_step'),dict):result['next_step']={k:result['next_step'][k] for k in ('kind','detail') if k in result['next_step']}
- if report.get('experiments'):result['experiments']=[{k:e[k] for k in ('purpose','argv','exit_code','evidence_path','script_sha256','source_fingerprint') if k in e} for e in report['experiments'][:2]]
+ if report.get('experiments'):result['experiments']=[{k:e[k] for k in ('purpose','argv','exit_code','evidence_path','script_sha256','source_fingerprint') if k in e} for e in report['experiments'][:4]]
  result['sources']=[{k:s[k] for k in ('kind','path','url','quote') if k in s} for s in report.get('sources',[])]
  return result
 
 
-def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=None,public_required=False,dependencies=None):
+def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=None,public_required=False,dependencies=None,checkpoint=None):
  available=catalog(repo,adapter)
  # Descriptions only in selection; full reviewed bytes are loaded for the chosen methods.
  phase='RESEARCH PLAN ONLY. Project role describes the wider workflow; this call selects a discovery question and methods, not a task Packet. '
- selection='\nBefore proposing any feature, choose ONE concrete discovery question and a stopping condition. Prefer relevant project PM skills. Default looop: methods fill only gaps: when project skills exist, give fallback_reason naming the missing method. Never replace a required project skill. Select only methods relevant to this decision, not the whole catalog. Explain unavailable/inapplicable skills explicitly. Project authority and data boundaries override skills. Write handoff.json result {"question":"...","stop_condition":"...","skills":["path/SKILL.md"],"skill_reason":"...","fallback_reason":"only if defaults fill a project gap"}.\nCatalog: '+json.dumps([{k:v for k,v in item.items() if k in ('path','description','origin')} for item in available],ensure_ascii=False)
+ selection='\nClassify kind as new_requirement (new product opportunity), existing_defect (specific current behavior violates an existing contract), or backlog_validation. Existing defects need verified source plus a successful controller-run synthetic reproduction before planning; self-labeling does not grant permission. '+ '\nBefore proposing any feature, choose ONE concrete discovery question and a stopping condition. Prefer relevant project PM skills. Default looop: methods fill only gaps: when project skills exist, give fallback_reason naming the missing method. Never replace a required project skill. Select only methods relevant to this decision, not the whole catalog. Explain unavailable/inapplicable skills explicitly. Project authority and data boundaries override skills. Write handoff.json result {"kind":"new_requirement|existing_defect|backlog_validation","question":"...","stop_condition":"...","skills":["path/SKILL.md"],"skill_reason":"...","fallback_reason":"only if defaults fill a project gap"}.\nCatalog: '+json.dumps([{k:v for k,v in item.items() if k in ('path','description','origin')} for item in available],ensure_ascii=False)
  def validate_plan(plan):
   if not isinstance(plan,dict):raise ValueError('Research plan must be a JSON object')
   for field in ('question','stop_condition'):
    if not isinstance(plan.get(field),str) or not plan[field].strip() or len(plan[field])>2000:raise ValueError('Research needs a bounded discovery question and stopping condition')
+  if plan.get('kind', 'new_requirement' if public_required else 'backlog_validation') not in KINDS:raise ValueError('Invalid research kind')
+  if public_required and plan.get('kind')=='backlog_validation':raise ValueError('No selected backlog or requirement; choose new_requirement or existing_defect')
   load_skills(repo,plan,available)
   for key in ('skill_reason','fallback_reason'):
    if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
  plan=invoke(run,repo,folder/'research-plan',phase+'\n'+role_prompt+'\n'+context+'\n'+selection,fresh,validate=validate_plan,role='readonly',execution_route=execution_route)
  skills=load_skills(repo,plan,available)
- plan={k:v for k,v in plan.items() if k in ('question','stop_condition','skills','skill_reason','fallback_reason')}
+ plan={k:v for k,v in plan.items() if k in ('kind','question','stop_condition','skills','skill_reason','fallback_reason')}
+ plan.setdefault('kind','new_requirement' if public_required else 'backlog_validation')
  for key in ('skill_reason','fallback_reason'):
   if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
  plan['skills']=[s['path'] for s in skills]
- prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps({k:plan[k] for k in ('question','stop_condition')},ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
- prompt+='\nConduct the research using real tools and permitted sources. Distinguish facts, inference and unknowns. Do not invent interviews, analytics, experiments or citations. No outreach, private data, payment or production access. '+('This is new requirement discovery: investigate public sources as well as current repository reality. ' if public_required else 'Validate the backlog/confirmed requirement against repository evidence; public research only when needed and permitted. ')
- prompt+='If runtime evidence is needed, request next_step kind experiment with detail and experiment {runtime: python|node|node_ts, purpose: concrete falsifiable question, script: complete script}. The controller runs it in a disposable copy with existing project dependencies and returns the actual exit code and bounded output. Use relative imports from the project root. Only synthetic inputs, fixed model stubs and in-memory receivers; no network, database, mail, external model, credential access, installations or source edits. Do not stop just because this read-only snapshot lacks node_modules; request the experiment instead. A probe is evidence gathering, never development authorization or proof by assertion. The controller does not interpret exit zero as a supported conclusion. '
+ prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps({k:plan[k] for k in ('kind','question','stop_condition')},ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
+ prompt+='\nConduct the research using real tools and permitted sources. Distinguish facts, inference and unknowns. Do not invent interviews, analytics, experiments or citations. No outreach, private data, payment or production access. '+('New product requirements need public research; existing defects need current source contracts and controller-executed reproduction. ' if public_required else 'Validate the backlog/confirmed requirement against repository evidence; public research only when needed and permitted. ')
+ prompt+='If runtime evidence is needed, request next_step kind experiment with detail and experiment {runtime: python|node|node_ts, purpose: concrete falsifiable question, script: complete script}. The controller runs it in a disposable copy with existing project dependencies and returns the actual exit code and bounded output. Use relative imports from the project root. Write concise complete JSON observations to the file named by LOOOP_EXPERIMENT_RESULT (at most 12000 bytes); verbose stdout may be truncated. Only synthetic inputs, fixed model stubs and in-memory receivers; no network, database, mail, external model, credential access, installations or source edits. Do not stop just because this read-only snapshot lacks node_modules; request the experiment instead. A probe is evidence gathering, never development authorization or proof by assertion. The controller does not interpret exit zero as a supported conclusion. For existing_defect supported reports, include defect_evidence {expected: existing contract, observed: conflicting observation, contract_source: one cited repository path, experiment: zero-based index in controller receipts}. A synthetic fixture cannot establish demand for a new feature. '
  prompt+='Write handoff.json result {"status":"supported|insufficient_evidence|rejected","question":"...","finding":"...","counterevidence":"...","recommendation":"...","skill_usage":[{"path":"...","impact":"method actually applied"}],"sources":[{"kind":"repository|public","path":"repo/file","url":"https://...","quote":"exact source quotation"}]}. Use at most 8 focused sources. Repository paths must name files without line-number suffixes. When evidence is insufficient, include next_step {kind: investigate|experiment|human_decision|wait_source, detail: specific missing evidence or decision}. Use investigate for permitted source reads still to perform; human_decision for a concrete product policy decision; wait_source for inaccessible external evidence. Never substitute a guessed requirement.'
  def validate_report(report):
   if not isinstance(report,dict) or report.get('status') not in ('supported','insufficient_evidence','rejected'):raise ValueError('Research requires an explicit evidence conclusion')
@@ -142,8 +146,10 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
      try:safe_file(repo,name)
      except ValueError as exc:raise ValueError('Repository source path must name an existing file, without line-number suffixes: '+name[:240]) from exc
     elif source.get('kind')!='public':raise ValueError('Unrecognized research source')
+ from research_experiment import restored
+ experiments=restored(repo,checkpoint) if checkpoint else []
+ if experiments:prompt+='\nController-restored current-source experiments (indices follow this list; read existing receipt artifacts for full output, do not rerun without a concrete gap): '+json.dumps([{k:v for k,v in e.items() if k!='output'} for e in experiments],ensure_ascii=False)
  original_prompt=prompt
- experiments=[]
  for followup in range(3):
   target=folder/('research' if followup==0 else 'research-followup-'+str(followup))
   citation_prompt=prompt
@@ -154,13 +160,13 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
    usage=report['skill_usage']
    try:
     fresh()
-    report=verify(report,repo,public_required)
+    report=verify(report,repo,public_required,plan['kind'],experiments)
     if correction:save(folder/(target.name+'-citation-recovery.json'),{'state':'recovered','corrections':correction,'automatic_retry':False})
     break
-   except CitationMismatch as exc:
+   except (CitationMismatch,EvidenceGap) as exc:
     save(folder/(target.name+'-citation-recovery.json'),{'state':'correcting' if correction<2 else 'needs_attention','corrections':correction,'automatic_retry':correction<2,'reason':str(exc)})
     if correction==2:raise
-    citation_prompt=prompt+'\nCITATION CORRECTION: '+str(exc)+'. Re-read the named permitted source with real tools, and copy a short exact contiguous quotation. Keep the SAME research question and methods. Preserve other gathered evidence. This is evidence correction, not formatting-only repair: revise conclusions honestly if the source does not support them. Do not fabricate text or drop contrary evidence to force supported status. If evidence remains unavailable, report insufficient_evidence with a specific next_step. Do not implement or expand authority. Previous report (unverified claims, not source truth):\n'+json.dumps(report,ensure_ascii=False)[:32000]
+    citation_prompt=prompt+'\nCITATION CORRECTION / EVIDENCE CORRECTION: '+str(exc)+'. For quotation errors, Re-read the named source and copy an exact quotation. For missing public evidence, investigate permitted public sources. For missing runtime evidence, return insufficient_evidence with next_step.kind=experiment and the script; do not invent an execution receipt. Keep the SAME research question and methods. Preserve other gathered evidence. This is evidence correction, not formatting-only repair: revise conclusions honestly if the source does not support them. Do not fabricate text or drop contrary evidence to force supported status. If evidence remains unavailable, report insufficient_evidence with a specific next_step. Do not implement or expand authority. Previous report (unverified claims, not source truth):\n'+json.dumps(report,ensure_ascii=False)[:32000]
   report={**report,'skill_usage':[{'path':s['path'],'impact':next(v['impact'] for v in usage if isinstance(v,dict) and v.get('path')==s['path'])} for s in skills],'plan':plan,'loaded_skills':[{k:v for k,v in s.items() if k!='content'} for s in skills],'followups':followup}
   if experiments:report['experiments']=experiments
   save(folder/'research.json',report)
@@ -170,6 +176,7 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
    from research_experiment import execute
    experiment=execute(repo,folder/('experiment-'+str(followup+1)),report['next_step']['experiment'],dependencies,fresh)
    experiments.append(experiment)
+   report['experiments']=experiments;save(folder/'research.json',report)
   if followup<2:
    fresh()
    prompt=original_prompt+'\nRESEARCH CONTINUATION: Continue the SAME question and stopping condition. Read the missing permitted sources with real tools now; the controller is executing your investigation request in this call. Preserve established facts, counterevidence and authority. This is research, not a format-only correction or permission to develop. If a real human policy decision or unavailable source prevents progress, state next_step accordingly. Previous bounded finding and gap:\n'+json.dumps(brief(report),ensure_ascii=False)

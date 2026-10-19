@@ -39,6 +39,11 @@ def retry(root,lane,job,reason,expected,board):
    issue=board.api('GET','/issues/'+state['issue'])
    if issue.get('projectId')!=cfg['id'] or issue.get('status') not in ('in_progress','blocked','cancelled'):raise ValueError('PM 任务状态不匹配，需要先核对。')
    board.api('PATCH','/issues/'+state['issue'],{'status':'cancelled','comment':'人工核验后重新规划，原提案保留：'+reason[:2000]})
+  state['research_checkpoint']=str(path.parent)
+  report=path.parent/'research.json'
+  if report.is_file():
+   from product_research import brief
+   state.setdefault('research_continuation',brief(json.loads(report.read_text())))
   state.update(state='cancelled',interrupted_planning=True,retry_pending=True,recovery_reason=reason[:2000]);save(path,state)
   store.selection(lane,'waiting','已保留旧提案；等待根据最新代码与状态重新规划。')
  return {'queued':True,'message':'旧提案已保留。将按当前循环设置重新规划；暂停模式下请启动单次或持续运行。'}

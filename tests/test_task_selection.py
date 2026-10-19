@@ -36,6 +36,7 @@ class Selection(unittest.TestCase):
   with self.assertRaises(ValueError):check_source({'action':'task'},'backlog_only',None,items)
   self.assertIsNone(check_source({'action':'task'},'backlog_and_research',None,items))
  def test_empty_backlog_makes_no_model_calls(self):
+  self.research_mock.return_value['evidence_basis']={'kind':'new_requirement','public_sources':1,'runtime_receipts':[],'repository_verified':True}
   self.research_mock.return_value['sources'].append({'kind':'public','url':'https://example.com/research','quote':'Verified fixture research supporting the new requirement.'})
   self.mandate['backlog_paths']=[];self.setup_tick()
   class Board:
@@ -46,6 +47,7 @@ class Selection(unittest.TestCase):
    autonomy.tick('test');autonomy.tick('test');run.assert_not_called()
   self.assertFalse((self.root/'data/delivery-bindings').exists())
  def test_research_without_backlog_allowed_and_scope_preserved(self):
+  self.research_mock.return_value['evidence_basis']={'kind':'new_requirement','public_sources':1,'runtime_receipts':[],'repository_verified':True}
   self.research_mock.return_value['sources'].append({'kind':'public','url':'https://example.com/research','quote':'Verified fixture research supporting the new requirement.'})
   self.mandate['backlog_paths']=[];self.setup_tick();store=Store(self.root);store.ensure('test');set_settings(self.root,'test',None,'backlog_and_research',0,'research');self.value.pop('backlog_item')
   class Board:
@@ -54,6 +56,16 @@ class Selection(unittest.TestCase):
     return {'id':'delivery' if d and d.get('status')=='backlog' else 'pm','identifier':'T-1'}
   with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=[json.dumps(self.value),'{"verdict":"approved"}']):autonomy.tick('test')
   binding=json.loads((self.root/'data/delivery-bindings/delivery.json').read_text());self.assertEqual(binding['policy']['allowed_paths'],['test.py'])
+ def test_reproduced_defect_without_public_source_reaches_delivery_with_original_scope(self):
+  self.research_mock.return_value['evidence_basis']={'kind':'existing_defect','public_sources':0,'runtime_receipts':['controller/experiment/result.json'],'repository_verified':True}
+  self.mandate['backlog_paths']=[];self.setup_tick();store=Store(self.root);store.ensure('test');set_settings(self.root,'test',None,'backlog_and_research',0,'research');self.value.pop('backlog_item')
+  class Board:
+   def api(self,m,p,d=None):
+    if p=='/auth/get-session':return {'user':{'id':'owner'}}
+    return {'id':'delivery' if d and d.get('status')=='backlog' else 'pm','identifier':'T-1'}
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=[json.dumps(self.value),'{"verdict":"approved"}']):autonomy.tick('test')
+  binding=json.loads((self.root/'data/delivery-bindings/delivery.json').read_text());self.assertEqual(binding['policy']['allowed_paths'],['test.py'])
+
  def test_switch_during_planning_rejects_stale_dispatch(self):
   self.setup_tick();store=Store(self.root);store.ensure('test');(self.root/'data/project-state/enabled').touch()
   class Board:
