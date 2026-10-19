@@ -1,6 +1,6 @@
 """Versioned project state. External intent commands and controller transitions are distinct."""
 import contextlib,fcntl,hashlib,json,pathlib,re,sqlite3,time,uuid
-from lifecycle_io import save as save_document
+from lifecycle_io import save as save_document,validate_receipt
 
 class Conflict(ValueError):pass
 class Held(ValueError):pass
@@ -17,6 +17,9 @@ def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_a
 def valid_lane(lane):
  if not isinstance(lane,str) or not re.fullmatch('[a-z][a-z0-9-]{0,47}',lane):raise ValueError('Invalid project lane')
  return lane
+
+def unresolved_work(work):
+ return any(r.get('cleanup') or r.get('unverified') or r.get('verdict')!='approved' for r in work.get('results',{}).values())
 
 def initial(lane,config):
  return {'schema_version':1,'project':lane,'revision':0,'planning_revision':0,'phase':'idle','next_action':'PM selects meaningful work within mandate','config':config,'intents':{},'tasks':{},'selection':None}
@@ -95,14 +98,16 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
   with self.connection(lane) as c:r=c.execute('SELECT doc FROM projects WHERE lane=?',(lane,)).fetchone()
   if not r:raise ValueError('Project state not initialized')
   return json.loads(r['doc'])
- def context(self,lane):
+ def context(self,lane,history=False):
   doc=self.read(lane)
   # Conversations hydrate a bounded view; complete audit is available via read/history.
   tasks=doc['tasks'];active={k:v for k,v in tasks.items() if v['phase'] not in ('completed','cancelled')}
-  recent=list(tasks.items())[-3:]
+  recent=list(tasks.items()) if history else []
   selected=dict(recent);selected.update(active)
   intents={k:v for k,v in doc['intents'].items() if v['status'] not in ('completed','withdrawn','superseded')}
-  return {**doc,'tasks':selected,'intents':intents,'history_task_count':len(tasks),'history_intent_count':len(doc['intents'])}
+  works=doc.get('external_work',{})
+  visible=works if history else {k:v for k,v in works.items() if v['status']=='active' or unresolved_work(v)}
+  return {**doc,'tasks':selected,'intents':intents,'external_work':visible,'history_work_count':len(works),'history_task_count':len(tasks),'history_intent_count':len(doc['intents'])}
  def mutate(self,lane,request_id,command,apply,expected=None,source='controller'):
   valid_lane(lane)
   if not isinstance(request_id,str) or not re.fullmatch('[a-zA-Z0-9_.:-]{1,120}',request_id):raise ValueError('Stable request_id required')
@@ -262,8 +267,10 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
  def external_work(self,lane,command,expected,request_id,source):
   if expected is None or not source:raise ValueError('Revision and source required')
   action=command.get('action');work_id=command.get('id');summary=command.get('summary')
-  if action not in ('start','progress','finish','cancel') or not isinstance(work_id,str) or not re.fullmatch('[a-zA-Z0-9-]{1,80}',work_id):raise ValueError('Invalid external work command')
+  if action not in ('start','progress','finish','cancel','result') or not isinstance(work_id,str) or not re.fullmatch('[a-zA-Z0-9-]{1,80}',work_id):raise ValueError('Invalid external work command')
   if not isinstance(summary,str) or not 1<=len(summary)<=8000:raise ValueError('Concise progress summary required')
+  receipt=validate_receipt(command['receipt']) if action=='result' else None
+  if receipt and receipt['task_id']!=work_id:raise ValueError('Receipt task differs from work ID')
   def apply(doc):
    works=doc.setdefault('external_work',{});item=works.get(work_id)
    if action=='start':
@@ -272,13 +279,17 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
     if any(w['status']=='active' for w in works.values()):raise Held('Another external work session is active')
     item={'id':work_id,'source':source,'status':'active','started_at':time.time()};works[work_id]=item
    else:
-    if not item or item['source']!=source or item['status']!='active':raise Conflict('No active work owned by this source')
+    if not item or item['source']!=source or (item['status']!='active' and action!='result'):raise Conflict('No active work owned by this source')
     if action in ('finish','cancel'):item['status']='completed' if action=='finish' else 'cancelled'
+   if receipt:
+    results=item.setdefault('results',{});key=receipt['role']+':'+receipt['stage']
+    if key not in results and len(results)>=16:raise ValueError('Too many role stages in one work session')
+    results[key]=receipt
    item.update(summary=summary,updated_at=time.time(),verification='self_reported')
    from product_goals import active
    goal=active(doc)
-   if goal:goal.update(progress=summary,progress_verification='self_reported')
-   if action!='progress':doc['planning_revision']+=1;doc['selection']=None
+   if goal and item['status']=='active':goal.update(progress=summary,progress_verification='self_reported')
+   if action in ('start','finish','cancel'):doc['planning_revision']+=1;doc['selection']=None
    return item
   return self.mutate(lane,request_id,{'type':'external_work',**command},apply,expected,source)
  def merge_gate(self,lane,job,target,perform):

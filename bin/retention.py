@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bound diagnostic history; preserve active work, unsynced events and current state."""
 import json,pathlib,shutil,time
-from project_state import Store
+from project_state import Store,unresolved_work
 
 POLICY={'log_bytes':2*1024*1024,'event_limit':500,'completed_work_limit':20,'history_days':14,'history_per_category':20,'history_bytes':1024*1024*1024,'backup_limit':3}
 
@@ -15,7 +15,7 @@ def compact_state(store,lane,limit=500):
   row=c.execute('SELECT doc FROM projects WHERE lane=?',(lane,)).fetchone()
   if row:
    doc=json.loads(row['doc']);works=doc.get('external_work',{});completed=[(k,v) for k,v in works.items() if v['status']!='active'];keep={k for k,v in sorted(completed,key=lambda x:x[1]['updated_at'])[-POLICY['completed_work_limit']:]}
-   doc['external_work']={k:v for k,v in works.items() if v['status']=='active' or k in keep}
+   doc['external_work']={k:v for k,v in works.items() if v['status']=='active' or unresolved_work(v) or k in keep}
    terminal=[k for k,v in doc['tasks'].items() if v['phase'] in ('completed','cancelled')]
    for job in terminal[:-20]:
     receipt=store.root/'data/deliveries'/job/'state.json'

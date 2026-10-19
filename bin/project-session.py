@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Project-local context and independent work journal; Paperclip is optional."""
-import argparse,fcntl,json,pathlib,sys,uuid
+import argparse,fcntl,json,pathlib,subprocess,sys,uuid
+from lifecycle_io import validate_receipt
 from project_state import Store
 
 def save(p,v):
@@ -12,14 +13,14 @@ def snapshot(repo,local):
  cached=json.loads((local/'snapshot.json').read_text()) if (local/'snapshot.json').exists() else None
  local_work={}
  for event in pending:
-  c=event['command'];local_work[c['id']]={'status':{'start':'active','progress':'active','finish':'completed','cancel':'cancelled'}[c['action']],'summary':c['summary'],'verification':'self_reported','synchronization':'pending'}
+  c=event['command'];local_work[c['id']]={'status':{'start':'active','progress':'active','finish':'completed','cancel':'cancelled','result':'active'}[c['action']],'summary':c['summary'],'verification':'self_reported','synchronization':'pending'}
  return {'state_file':str(pathlib.Path(link['runtime'])/'data/project-state'/(link['lane']+'.current.json')) if link else None,'project_state':cached,'local_pending_work':local_work,'pending_events':len(pending),'linked':bool(link),'notice':'Cached state; read again before decisions. Offline records do not reserve scheduler execution.'}
 
-def refresh(repo,local):
+def refresh(repo,local,history=False):
  if not (local/'link.json').exists():return snapshot(repo,local)
  link=json.loads((local/'link.json').read_text());root=pathlib.Path(link['runtime'])
  if not root.is_dir():raise ValueError('Linked runtime unavailable; cached state and pending events retained')
- store=Store(root);v=store.context(link['lane']);save(local/'snapshot.json',v);return snapshot(repo,local)
+ store=Store(root);v=store.context(link['lane'],history=history);save(local/'snapshot.json',v);return snapshot(repo,local)
 
 def publish(repo,local):
  link=json.loads((local/'link.json').read_text());root=pathlib.Path(link['runtime'])
@@ -32,7 +33,7 @@ def publish(repo,local):
   if pending and pending[0]['expected_revision'] is None:pending[0]['expected_revision']=result['revision'];save(local/'pending.json',pending)
  refresh(repo,local);return results
 
-def operate(repo,action,work_id=None,summary=None,runtime=None,lane=None):
+def operate(repo,action,work_id=None,summary=None,runtime=None,lane=None,result_file=None,history=False):
  repo=pathlib.Path(repo).resolve();local=repo/'.agent/local';local.mkdir(parents=True,exist_ok=True)
  with (local/'session.lock').open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX)
@@ -56,19 +57,49 @@ def operate(repo,action,work_id=None,summary=None,runtime=None,lane=None):
    targetstore=Store(target);current=targetstore.read(lane)
    if targetstore.database(lane)!=targetstore.path:target=targetstore.database(lane).parents[2]
    events=Store(oldroot).events(old['lane']);pending=[];seen=set()
+   emitted={};statuses={}
    for e in events:
     event=json.loads(e['event'])
     if event['type']!='external_work':continue
-    item=event['data'];status=item['status'];action='start' if item['id'] not in seen else {'active':'progress','completed':'finish','cancelled':'cancel'}[status];seen.add(item['id'])
-    pending.append({'request_id':e['request_id'],'expected_revision':None if pending else current['revision'],'source':item['source'],'command':{'action':action,'id':item['id'],'summary':item['summary']}})
+    item=event['data'];work=item['id'];commands=[]
+    if work not in seen:
+     commands.append({'action':'start','id':work,'summary':item['summary']});seen.add(work)
+    for key,receipt in item.get('results',{}).items():
+     if emitted.get((work,key))!=receipt:
+      commands.append({'action':'result','id':work,'summary':receipt['summary'],'receipt':receipt});emitted[(work,key)]=receipt
+    if item['status']!='active' and statuses.get(work,'active')=='active':commands.append({'action':'finish' if item['status']=='completed' else 'cancel','id':work,'summary':item['summary']})
+    elif not commands and item['status']=='active':commands.append({'action':'progress','id':work,'summary':item['summary']})
+    statuses[work]=item['status']
+    for index,command in enumerate(commands):
+     pending.append({'request_id':e['request_id']+'-'+str(index),'expected_revision':None if pending else current['revision'],'source':item['source'],'command':command})
    save(local/'standalone-link.json',old);save(local/'link.json',{'runtime':str(target),'lane':lane});save(local/'pending.json',pending);save(local/'snapshot.json',current)
    try:return {'accepted':publish(repo,local),'standalone_state_preserved':str(oldroot)}
    except (OSError,ValueError) as exc:return {'pending_events':len(json.loads((local/'pending.json').read_text())),'error':str(exc),'next_action':'Resolve controller conflict; local history is retained'}
   if action=='context':
-   try:return refresh(repo,local)
+   try:return refresh(repo,local,history=history)
    except (OSError,ValueError) as exc:return {**snapshot(repo,local),'refresh_error':str(exc),'stale':True}
   if action=='cached':return snapshot(repo,local)
   if action=='sync':return {'accepted':publish(repo,local),'mirror':'Paperclip mirror is asynchronous when linked to a scheduler runtime'}
+  receipt=None
+  if action=='result':
+   if not result_file:raise ValueError('result requires --result-file')
+   path=pathlib.Path(result_file)
+   if path.is_symlink() or not path.is_file() or path.stat().st_size>64000:raise ValueError('Invalid result file')
+   def pairs(items):
+    result={}
+    for key,value in items:
+     if key in result:raise ValueError('Duplicate result key')
+     result[key]=value
+    return result
+   receipt=validate_receipt(json.loads(path.read_text(),object_pairs_hook=pairs))
+   if receipt['task_id']!=work_id:raise ValueError('Receipt task differs from work ID')
+   for field in ('baseline_sha','target_sha'):
+    subprocess.run(['git','-C',str(repo),'cat-file','-e',receipt[field]+'^{commit}'],check=True,capture_output=True)
+   subprocess.run(['git','-C',str(repo),'merge-base','--is-ancestor',receipt['baseline_sha'],receipt['target_sha']],check=True,capture_output=True)
+   head=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()
+   if head!=receipt['target_sha']:raise ValueError('Receipt target differs from current checkout HEAD')
+   if subprocess.check_output(['git','-C',str(repo),'status','--porcelain','--untracked-files=normal'],text=True).strip():raise ValueError('Commit-backed result requires a clean checkout; use progress for unfinished work')
+   summary=receipt['summary']
   if not work_id or not summary:raise ValueError('Work ID and summary required')
   pending=json.loads((local/'pending.json').read_text());cached=json.loads((local/'snapshot.json').read_text())
   # Refresh before online writes; do not silently reinterpret an older pending batch.
@@ -77,14 +108,15 @@ def operate(repo,action,work_id=None,summary=None,runtime=None,lane=None):
    except (OSError,ValueError):pass
   source='project-session:'+str(repo)
   e={'request_id':'external-'+uuid.uuid4().hex,'expected_revision':None if pending else cached['revision'],'source':source,'command':{'action':action,'id':work_id,'summary':summary}}
+  if receipt:e['command']['receipt']=receipt
   pending.append(e);save(local/'pending.json',pending)
   try:return {'accepted':publish(repo,local),'pending_events':0}
   except (OSError,ValueError) as exc:return {'pending_events':len(json.loads((local/'pending.json').read_text())),'error':str(exc),'next_action':'Read current state and resolve conflict before retry; do not overwrite state or silently rebase events'}
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['init','connect','context','cached','sync','start','progress','finish','cancel']);p.add_argument('--repo',default='.');p.add_argument('--runtime');p.add_argument('--lane');p.add_argument('--id');p.add_argument('--summary');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['init','connect','context','cached','sync','start','progress','finish','cancel','result']);p.add_argument('--repo',default='.');p.add_argument('--runtime');p.add_argument('--lane');p.add_argument('--id');p.add_argument('--summary');p.add_argument('--result-file');p.add_argument('--history',action='store_true');a=p.parse_args()
  try:
   if a.runtime and not a.lane:p.error('--runtime requires --lane')
-  print(json.dumps(operate(a.repo,a.action,a.id,a.summary,a.runtime,a.lane),ensure_ascii=False,indent=2))
- except (OSError,ValueError,KeyError) as exc:print(json.dumps({'error':str(exc)},ensure_ascii=False));return 2
+  print(json.dumps(operate(a.repo,a.action,a.id,a.summary,a.runtime,a.lane,a.result_file,a.history),ensure_ascii=False,indent=2))
+ except (OSError,ValueError,KeyError,subprocess.CalledProcessError) as exc:print(json.dumps({'error':str(exc)},ensure_ascii=False));return 2
 if __name__=='__main__':sys.exit(main())

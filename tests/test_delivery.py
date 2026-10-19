@@ -27,6 +27,17 @@ class Delivery(unittest.TestCase):
   def forbidden(*a,**kw):raise AssertionError('duplicate model execution')
   self.assertEqual(self.execute('task-one',harness=forbidden)['target_sha'],first['target_sha'])
   self.assertEqual((self.repo/'app.py').read_text(),'value = 0\n')
+ def test_scheduler_emits_shared_stage_receipts_bound_to_target(self):
+  from lifecycle_io import validate_receipt
+  state=self.execute();folder=self.root/'data/deliveries/task-one'
+  receipts=[validate_receipt(json.loads(p.read_text())) for p in folder.glob('*/stage-receipt.json')]
+  self.assertEqual({r['stage'] for r in receipts},{'build','review','acceptance'})
+  for receipt in receipts:
+   self.assertEqual(receipt['task_id'],'task-one')
+   self.assertEqual(receipt['target_sha'],state['target_sha'])
+   self.assertEqual(receipt['baseline_sha'],self.packet['baseline_sha'])
+  review=next(r for r in receipts if r['stage']=='review')
+  self.assertEqual(review['checks'],[str(folder/'checks-1.json')])
  def test_scope_violation_stops_before_checks(self):
   def bad(workspace,*a,**kw):
    if kw['role']=='builder':(pathlib.Path(workspace)/'other.py').write_text('changed')

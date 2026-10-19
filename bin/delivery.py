@@ -144,7 +144,12 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    state['rejected_trees']=resumed.get('rejected_trees',[])
    if resume_repair:state['rejected_trees']=(state['rejected_trees']+[git(candidate,'rev-parse',target+'^{tree}').decode().strip()])[-8:]
   def persist(stage):
-   state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error')});emit(stage)
+   state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error'),'stage_receipt':state.get('stage_receipt')});emit(stage)
+  def receipt(step,rid,value,target,checks=()):
+   from lifecycle_io import validate_receipt,save
+   doc={'version':1,'task_id':job,'role':step['role'],'stage':step['stage'],'baseline_sha':sha,'target_sha':target,'verdict':value['verdict'],'summary':value.get('summary') or (step['stage']+' concluded '+value['verdict']),'findings':value.get('findings',[]),'checks':list(checks),'artifacts':[str(root/rid/'validated-result.json')],'unverified':[],'cleanup':[]}
+   save(root/rid/'stage-receipt.json',validate_receipt(doc))
+   state['stage_receipt']=str(root/rid/'stage-receipt.json')
   def role(step,workspace,prompt,metadata=None):
    task_guard(ROOT,job)
    rid=step['role']+'-'+uuid.uuid4().hex[:12]
@@ -262,6 +267,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
       elif dest.exists():dest.unlink()
      git(candidate,'add','--',*sorted(changed));git(candidate,'-c','core.hooksPath=/dev/null','-c','user.name=Agent Control','-c','user.email=agent-control@localhost','commit','-m',packet['title'])
      target=git(candidate,'rev-parse','HEAD').decode().strip();update_target(state,target);state['builder_run']=rid
+     receipt(buildstep,rid,check_result(build_result),target)
     target=state['target_sha']
     target_tree=git(candidate,'rev-parse',target+'^{tree}').decode().strip()
     if target_tree in state.get('rejected_trees',[]):raise GateError('No repair progress: candidate repeats a recently rejected source tree; inspect findings and repair strategy')
@@ -274,14 +280,14 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if any(c['exit_code'] for c in checks):
      if policy.get('on_check_failure')=='stop':raise GateError('Test-only check failed; preserve evidence; Product disposition required')
      feedback=json.dumps(checks);rejected();continue
-    receipt=root/(f'checks-{roundno}-resume-'+str(state['review_resume_count'])+'.json' if resumed else f'checks-{roundno}.json')
-    check_summary=check_context(target,checks,receipt)
+    receipt_path=root/(f'checks-{roundno}-resume-'+str(state['review_resume_count'])+'.json' if resumed else f'checks-{roundno}.json')
+    check_summary=check_context(target,checks,receipt_path)
     failed=False
     for step in policy['workflow']:
      if step['stage']!='review':continue
      mode=step.get('mode','standard');persist('review_'+mode)
      rr,text=role(step,review,context+check_summary+review_navigation(candidate,sha,target,review_history.get(mode),root)+'Independently review full baseline-to-target diff. Target SHA '+target+'; baseline '+sha+'. A private copy of candidate Git metadata is available. Write handoff.json result {"verdict":"approved|changes_requested|blocked","findings":[]}. No Builder conversation shared.',metadata=candidate/'.git')
-     v=check_result(text);state['reviews'][mode]={**v,'mode':mode,'run_id':rr,'target_sha':target}
+     v=check_result(text);receipt(step,rr,v,target,[str(receipt_path)]);state['reviews'][mode]={**v,'mode':mode,'run_id':rr,'target_sha':target}
      review_history[mode]=dict(state['reviews'][mode])
      if v['verdict']=='blocked':raise GateError('Review blocked: '+text)
      if v['verdict']!='approved':feedback=text;failed=True;break
@@ -289,7 +295,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if any(s['stage']=='acceptance' for s in policy['workflow']):
      step=next(s for s in policy['workflow'] if s['stage']=='acceptance');persist('acceptance')
      ar,text=role(step,review,context+check_summary+'Independently verify acceptance criteria against target SHA '+target+' and available synthetic checks. Source visible; this is not black-box or production acceptance. Run permitted checks if useful. Write handoff.json result {"verdict":"approved|changes_requested|blocked","findings":[],"evidence":[]}.',metadata=candidate/'.git')
-     av=check_result(text)
+     av=check_result(text);receipt(step,ar,av,target,[str(receipt_path)])
      if av['verdict']=='blocked':raise GateError('Acceptance blocked: '+text)
      if av['verdict']!='approved':feedback=text;rejected();continue
      state['acceptance']={**av,'target_sha':target,'run_id':ar}

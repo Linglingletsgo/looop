@@ -17,7 +17,7 @@ def status(root=ROOT,companies=()):
  root=pathlib.Path(root);config=read(root/'data/control.json',{});store=Store(root);projects=[]
  for lane,cfg in config.get('projects',{}).items():
   policy=read(root/'data/autonomy-policies'/(lane+'.json'),None)
-  doc=store.context(lane);phase=doc['phase'];tasks=list(doc['tasks'].values());active=[t for t in tasks if t['phase'] not in ('completed','cancelled')]
+  doc=store.context(lane,history=True);phase=doc['phase'];tasks=list(doc['tasks'].values());active=[t for t in tasks if t['phase'] not in ('completed','cancelled')]
   intents=list(doc['intents'].values());attention=[]
   for item in intents:
    if item['status']=='waiting_decision':attention.append({'title':item['title'],'reason':item.get('planning_reason','需求变更需要决定'),'body':item['body'][:4000],'kind':'decision','intent_id':item['id'],'intent_kind':item['kind']})

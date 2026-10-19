@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "task_id": "task-123",
+  "role": "builder",
+  "stage": "build",
+  "baseline_sha": "0000000000000000000000000000000000000000",
+  "target_sha": "0000000000000000000000000000000000000000",
+  "verdict": "approved",
+  "summary": "本阶段实现完成；仍需独立审核",
+  "findings": [],
+  "checks": [
+    "填写实际命令、结果与证据位置；未运行则移入 unverified"
+  ],
+  "artifacts": [],
+  "unverified": [
+    "独立审核尚未完成"
+  ],
+  "cleanup": []
+}

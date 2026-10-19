@@ -9,9 +9,9 @@ Personal agent scheduler and Paperclip customization. One maintained repository 
 - `retention.json`: bounded diagnostic retention.
 - `tests/`: Linux verification.
 
-Each project owns `.agent/local/runtime/data/project-state/state.sqlite` and `current.json`. Paperclip and independent conversations use this same state. Controller `locations.json` stores local routing only. `.agent/project.json`, `.agent/tools/` and a short AGENTS entry provide the portable project interface. Historical HANDOFF is reference, not current state.
+Each project owns the authoritative `.agent/local/runtime/data/project-state/<lane>.current.json`; `current.json` is a compatibility alias and SQLite maintains transactional indexes. Paperclip and independent conversations use this same state. Controller `locations.json` stores local routing only. `.agent/project.json`, `.agent/tools/` and a short AGENTS entry provide the portable project interface. Historical HANDOFF is reference, not current state.
 
-Independent project: `python3 .agent/tools/project-session.py context --repo .`. Use start/progress/finish to update current work; start must be accepted before assuming scheduler exclusivity. No periodic handoff or conversation transcript is required.
+Independent project: `python3 .agent/tools/project-session.py context --repo .`. Use start/progress/finish to update current work; start must be accepted before assuming scheduler exclusivity. No periodic handoff or conversation transcript is required. Default context excludes completed history; request `context --history` explicitly. Submit commit-backed role evidence with `result --id WORK_ID --result-file FILE`; session finish is self-reported and never means reviewed or merged. See [project state and handoff](docs/project-state-protocol.md) for the result template, offline behavior and resource ownership. Existing project tools require a separately reviewed upgrade; scheduler updates do not overwrite WOS or other project exports.
 
 Install from a clone on Linux: `python3 bin/setup.py` (Node24+, Python3, Git). Reconnect local credentials and project paths; these are intentionally excluded from Git. GitHub preserves the scheduler code, not secrets or live business state. To move active work, transfer each project's ignored state directory securely and relink it; do not run two schedulers against divergent copies.
 

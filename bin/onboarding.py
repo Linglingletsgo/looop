@@ -96,7 +96,7 @@ def connect(root,repo,fingerprint,board=None):
   ignore=repo/'.gitignore';text=ignore.read_text() if ignore.exists() else ''
   if '.agent/local/' not in text.splitlines():ignore.write_text(text+('' if not text or text.endswith('\n') else '\n')+'.agent/local/\n')
   agents=repo/'AGENTS.md';text=agents.read_text() if agents.exists() else ''
-  if '<!-- looop-state -->' not in text:agents.write_text(text+'\n\n<!-- looop-state -->\nRead `.agent/project.json` and current state with `python3 .agent/tools/project-session.py context --repo .`. Use start/progress/finish for independent work; start must be accepted before editing. Historical HANDOFF is context, not current permission. State and tools work without Paperclip.\n')
+  if '<!-- looop-state -->' not in text:agents.write_text(text+'\n\n<!-- looop-state -->\nRead `.agent/project.json` and current state with `python3 .agent/tools/project-session.py context --repo .`. Use start/progress/finish for independent work; start must be accepted before editing. Submit commit-backed stage evidence with result --result-file; finish is self-reported, not review or merge. Historical HANDOFF is context, not current permission. State and tools work without Paperclip.\n')
   Store(runtime).ensure(lane,{'repository':str(repo),'integration':'observe'})
   if not link.exists():save(link,{'runtime':str(runtime),'lane':lane});save(local/'pending.json',[])
   save(local/'snapshot.json',Store(runtime).context(lane))
