@@ -22,6 +22,7 @@ def source_fingerprint(root):
  for p in pathlib.Path(root).rglob('*'):
   relative=p.relative_to(root)
   if set(relative.parts)&{'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}:continue
+  if p.suffix=='.tsbuildinfo' and not p.is_symlink():continue
   if p.is_symlink():result[str(relative)]='link:'+str(p.readlink())
   elif p.is_file():result[str(relative)]=hashlib.sha256(p.read_bytes()).hexdigest()
  return result

@@ -49,6 +49,7 @@ def tree(root):
  result={}
  for p in pathlib.Path(root).rglob('*'):
   if set(p.relative_to(root).parts)&{'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}:continue
+  if p.suffix=='.tsbuildinfo' and not p.is_symlink():continue
   if p.is_symlink():raise GateError('Symlink output refused')
   if p.is_file():result[str(p.relative_to(root))]=hashlib.sha256(p.read_bytes()).hexdigest()
  return result
@@ -247,7 +248,9 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
      if check_result(build_result)['verdict']=='blocked':raise GateError('Builder blocked: '+build_result)
      state.pop('pending_builder',None)
      after=tree(workspace);changed={p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)}
-     if not changed or not changed<=set(packet['allowed_paths']):raise GateError('No change or outside Packet scope')
+     if not changed:raise GateError('No change inside Packet scope')
+     outside=changed-set(packet['allowed_paths'])
+     if outside:raise GateError('Outside Packet scope: '+', '.join(sorted(outside)))
      for name in changed:
       dest=candidate/name;source=workspace/name
       if source.is_file():dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)

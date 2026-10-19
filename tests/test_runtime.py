@@ -120,3 +120,12 @@ class Runtime(unittest.TestCase):
    self.assertEqual(env['ANTHROPIC_API_KEY'],'PRIVATE-BRIDGE-KEY')
    self.assertNotIn('ANTHROPIC_AUTH_TOKEN',env);self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN',env)
    for name in ('HAIKU','SONNET','OPUS'):self.assertEqual(env['ANTHROPIC_DEFAULT_'+name+'_MODEL'],sandbox.FLASH)
+
+ def test_incremental_typescript_cache_is_not_source_or_packet_output(self):
+  from repository import source_fingerprint
+  from delivery import tree
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);(root/'source.ts').write_text('const n = 1');before=source_fingerprint(root);scope=tree(root)
+   (root/'web').mkdir();(root/'web/tsconfig.tsbuildinfo').write_text('compiler cache')
+   self.assertEqual(source_fingerprint(root),before);self.assertEqual(tree(root),scope)
+   (root/'source.ts').write_text('const n = 2');self.assertNotEqual(source_fingerprint(root),before);self.assertNotEqual(tree(root),scope)
