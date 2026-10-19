@@ -1,5 +1,5 @@
 """Packet-driven bounded delivery, using explicit per-project execution policies."""
-import fcntl,hashlib,json,pathlib,re,shutil,subprocess,uuid,time
+import fcntl,hashlib,itertools,json,pathlib,re,shutil,subprocess,uuid,time
 from runtime import ROOT
 from repository import git,snapshot
 from executor import command
@@ -20,7 +20,7 @@ def validate(packet,policy):
  if not isinstance(packet['title'],str) or '\n' in packet['title'] or packet['title'].startswith('-'):raise GateError('Invalid task title')
  if not isinstance(packet['requirements'],list) or not isinstance(packet['acceptance'],list) or not all(isinstance(x,str) and x for x in packet['requirements']+packet['acceptance']):raise GateError('Criteria must be string lists')
  if not isinstance(packet['allowed_paths'],list) or not all(isinstance(x,str) for x in packet['allowed_paths']):raise GateError('Write scope must be a list of files')
- if not 1<=policy.get('max_rounds',0)<=6:raise GateError('Invalid round limit')
+ if policy.get('max_rounds') is not None and (type(policy['max_rounds']) is not int or policy['max_rounds']<1):raise GateError('Invalid round limit')
  if not policy.get('checks'):raise GateError('Explicit checks required')
  if any(s.get('provider','codex') not in ('codex','commandcode','claude_subscription','magpie_chatgpt','magpie_deepseek','magpie_commandcode') for s in policy.get('workflow',[])):raise GateError('Unapproved provider')
  for argv in policy['checks']:
@@ -90,9 +90,9 @@ def review_navigation(candidate,baseline,target,previous,folder):
   'Read focused ranges; expand only to resolve a concrete correctness question. Conclude when requirements, changed paths and relevant failure cases are covered; do not keep searching solely to produce more findings. No Builder conversation is supplied.\n')
  return text
 
-def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False):
+def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False,resume_repair=False):
  validate(packet,policy)
- if resume_review and resume_builder:raise GateError('Choose one resume stage')
+ if sum((resume_review,resume_builder,resume_repair))>1:raise GateError('Choose one resume stage')
  from execution_settings import read as read_settings,route as execution_route
  execution_settings=read_settings(ROOT)
  # No explicit owner settings yet: keep existing project provider mappings.
@@ -109,10 +109,11 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
   resumed=None
   if statefile.exists():
    old=json.loads(statefile.read_text())
-   if not (resume_review or resume_builder):emit('Existing attempt: '+old['state']+'; no replay');return old
+   if not (resume_review or resume_builder or resume_repair):emit('Existing attempt: '+old['state']+'; no replay');return old
    from process_owner import alive
    candidate=root/'candidate';target=old.get('target_sha')
    stage_ok=old.get('failed_stage')=='building' if resume_builder else old.get('failed_stage','').startswith('review_')
+   if resume_repair:stage_ok=old.get('error')=='Round limit reached; Product disposition required' and old.get('failure',{}).get('category')=='product_disposition' and any(v.get('verdict')=='changes_requested' and v.get('target_sha')==target for v in old.get('reviews',{}).values())
    if old['state']!='blocked' or not stage_ok or old.get('pr_url') or alive(old.get('owner')) is not False:raise GateError('Review resume requires an unpublished stopped review worker' if not resume_builder else 'Builder resume requires an unpublished stopped build worker')
    if resume_builder:
     pending=old.get('pending_builder',{})
@@ -122,8 +123,8 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     before=tree(candidate);after=tree(source)
     changes={n for n in before.keys()|after.keys() if before.get(n)!=after.get(n)}
     if not changes or not changes<=set(packet['allowed_paths']):raise GateError('Preserved Builder changes outside Packet scope')
-   if old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output','Expected one JSON object','Invalid JSON fence','Ambiguous conclusions outside JSON')):raise GateError('Only review output format failures can resume without Builder')
-   if old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
+   if not resume_repair and old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output','Expected one JSON object','Invalid JSON fence','Ambiguous conclusions outside JSON')):raise GateError('Only review output format failures can resume without Builder')
+   if not resume_repair and old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
    if json.loads((root/'packet.json').read_text())!=packet or json.loads((root/'policy.json').read_text())!=policy:raise GateError('Resume contract or policy changed')
    if git(candidate,'rev-parse','HEAD').decode().strip()!=target or git(candidate,'status','--porcelain').strip():raise GateError('Resume candidate changed or dirty')
    git(candidate,'merge-base','--is-ancestor',sha,target)
@@ -132,7 +133,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    from lifecycle import save
    save(root/('review-resume-'+str(old.get('review_resume_count',0)+1)+'.json'),old)
    resumed=old
-  elif resume_review or resume_builder:raise GateError('No failed review to resume')
+  elif resume_review or resume_builder or resume_repair:raise GateError('No failed review to resume')
   if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved; regenerate Packet')
   root.mkdir(parents=True,exist_ok=bool(resumed),mode=0o700)
   from process_owner import identity
@@ -140,6 +141,8 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
   if resumed:
    state.update({k:resumed[k] for k in ('round','target_sha','builder_run') if k in resumed})
    state['review_resume_count']=resumed.get('review_resume_count',0)+1
+   state['rejected_trees']=resumed.get('rejected_trees',[])
+   if resume_repair:state['rejected_trees']=(state['rejected_trees']+[git(candidate,'rev-parse',target+'^{tree}').decode().strip()])[-8:]
   def persist(stage):
    state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error')});emit(stage)
   def role(step,workspace,prompt,metadata=None):
@@ -189,7 +192,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    (root/rid/'validated-result.json').write_text(normalized)
    return rid,normalized
   try:
-   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Builder output recovery without re-execution' if resume_builder else 'Review format recovery at unchanged target SHA'})
+   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Continue repairs from preserved candidate and independent findings' if resume_repair else 'Builder output recovery without re-execution' if resume_builder else 'Review format recovery at unchanged target SHA'})
    persist('building' if resumed else 'planning')
    (root/'packet.json').write_text(json.dumps(packet,ensure_ascii=False,indent=2))
    (root/'policy.json').write_text(json.dumps(policy,ensure_ascii=False,indent=2))
@@ -236,11 +239,13 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     artifact=root/pending['run_id']/'result.md';raw=artifact.with_name('result.raw.md')
     if not raw.exists():raw.write_text(artifact.read_text())
     (artifact.parent/'validated-result.json').write_text(json.dumps(saved_result(artifact),ensure_ascii=False))
-   feedback='';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
-   review_history=dict(state.get('reviews',{}))
-   for roundno in range(resumed['round'] if resumed else 1,policy['max_rounds']+1):
+   feedback=json.dumps([v for v in resumed.get('reviews',{}).values() if v.get('verdict')=='changes_requested'],ensure_ascii=False) if resume_repair else '';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
+   review_history=dict(resumed.get('reviews',{}) if resumed else {})
+   start=resumed['round']+(1 if resume_repair else 0) if resumed else 1
+   for roundno in itertools.count(start):
+    if policy.get('max_rounds') is not None and roundno>policy['max_rounds']:raise GateError('Round limit reached; Product disposition required')
     state['round']=roundno
-    if not resumed or roundno!=resumed['round']:
+    if not resumed or roundno!=resumed['round'] or resume_repair:
      persist('building')
      workspace=snapshot(candidate,git(candidate,'rev-parse','HEAD').decode().strip(),root/f'build-{roundno}')
      before=tree(workspace)
@@ -258,13 +263,17 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
      git(candidate,'add','--',*sorted(changed));git(candidate,'-c','core.hooksPath=/dev/null','-c','user.name=Agent Control','-c','user.email=agent-control@localhost','commit','-m',packet['title'])
      target=git(candidate,'rev-parse','HEAD').decode().strip();update_target(state,target);state['builder_run']=rid
     target=state['target_sha']
+    target_tree=git(candidate,'rev-parse',target+'^{tree}').decode().strip()
+    if target_tree in state.get('rejected_trees',[]):raise GateError('No repair progress: candidate repeats a recently rejected source tree; inspect findings and repair strategy')
+    def rejected():
+     state['rejected_trees']=(state.get('rejected_trees',[])+[target_tree])[-8:]
     review=snapshot(candidate,target,root/(f'review-{roundno}-resume-'+str(state['review_resume_count']) if resumed else f'review-{roundno}'));persist('checking');checks=[]
     for argv in policy['checks']:
      result=command(review,argv,dependencies=dependencies,timeout=policy.get('check_timeout'));checks.append({'argv':argv,'exit_code':result.returncode,'output':result.stdout[-24000:]})
     (root/(f'checks-{roundno}-resume-'+str(state['review_resume_count'])+'.json' if resumed else f'checks-{roundno}.json')).write_text(json.dumps(checks,indent=2))
     if any(c['exit_code'] for c in checks):
      if policy.get('on_check_failure')=='stop':raise GateError('Test-only check failed; preserve evidence; Product disposition required')
-     feedback=json.dumps(checks);continue
+     feedback=json.dumps(checks);rejected();continue
     receipt=root/(f'checks-{roundno}-resume-'+str(state['review_resume_count'])+'.json' if resumed else f'checks-{roundno}.json')
     check_summary=check_context(target,checks,receipt)
     failed=False
@@ -276,13 +285,13 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
      review_history[mode]=dict(state['reviews'][mode])
      if v['verdict']=='blocked':raise GateError('Review blocked: '+text)
      if v['verdict']!='approved':feedback=text;failed=True;break
-    if failed:continue
+    if failed:rejected();continue
     if any(s['stage']=='acceptance' for s in policy['workflow']):
      step=next(s for s in policy['workflow'] if s['stage']=='acceptance');persist('acceptance')
      ar,text=role(step,review,context+check_summary+'Independently verify acceptance criteria against target SHA '+target+' and available synthetic checks. Source visible; this is not black-box or production acceptance. Run permitted checks if useful. Write handoff.json result {"verdict":"approved|changes_requested|blocked","findings":[],"evidence":[]}.',metadata=candidate/'.git')
      av=check_result(text)
      if av['verdict']=='blocked':raise GateError('Acceptance blocked: '+text)
-     if av['verdict']!='approved':feedback=text;continue
+     if av['verdict']!='approved':feedback=text;rejected();continue
      state['acceptance']={**av,'target_sha':target,'run_id':ar}
     require_pr(state,policy);persist('pr_ready')
     if publish:
@@ -295,7 +304,6 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
      persist('waiting_for_merge')
     else:persist('validated')
     return state
-   raise GateError('Round limit reached; Product disposition required')
   except Exception as exc:
    from lifecycle import failure
    state['error']=str(exc);state['failure']=({'category':'model_output','next_action':'修正输出协议后，从同一提交重新检查并独立审核','retryable':False} if isinstance(exc,(__import__('planning_runtime').InvalidOutput,__import__('output_protocol').OutputError,json.JSONDecodeError)) else failure(exc));state['failed_stage']=state['state'];persist('blocked');raise

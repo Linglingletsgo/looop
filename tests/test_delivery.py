@@ -40,6 +40,60 @@ class Delivery(unittest.TestCase):
    return '{"verdict":"approved","findings":[]}'
   with self.assertRaisesRegex(GateError,'Round limit'):self.execute(harness=build,check=lambda *a,**kw:subprocess.CompletedProcess([],1,'failure'))
   self.assertEqual(count[0],2)
+ def test_unlimited_repairs_follow_latest_findings_beyond_legacy_cap(self):
+  self.policy['max_rounds']=None;counts={'build':0,'review':0}
+  def model(workspace,scratch,prompt,**kwargs):
+   if kwargs['role']=='builder':
+    if counts['build']:self.assertIn('repair-'+str(counts['build']),prompt)
+    counts['build']+=1;(workspace/'app.py').write_text('value = '+str(counts['build'])+'\n')
+   if 'Independently review full' in prompt:
+    counts['review']+=1
+    if counts['review']<7:return json.dumps({'verdict':'changes_requested','findings':['repair-'+str(counts['review'])]})
+   return '{"verdict":"approved","findings":[]}'
+  result=self.execute(harness=model)
+  self.assertEqual(result['state'],'validated');self.assertEqual(result['round'],7)
+  self.assertEqual(counts,{'build':7,'review':7})
+  self.assertEqual(result['reviews']['standard']['target_sha'],result['target_sha'])
+
+ def test_unlimited_repairs_stop_on_repeated_rejected_tree(self):
+  self.policy.pop('max_rounds');counts={'build':0,'checks':0}
+  def model(workspace,scratch,prompt,**kwargs):
+   if kwargs['role']=='builder':
+    counts['build']+=1;(workspace/'app.py').write_text('value = '+str(counts['build']%2)+'\n')
+   if 'Independently review full' in prompt:return '{"verdict":"changes_requested","findings":["Still incorrect"]}'
+   return '{"verdict":"approved","findings":[]}'
+  def check(*a,**kw):
+   counts['checks']+=1;return subprocess.CompletedProcess([],0,'passed')
+  with self.assertRaisesRegex(GateError,'No repair progress'):self.execute(harness=model,check=check)
+  self.assertEqual(counts,{'build':3,'checks':2})
+  state=json.loads((self.root/'data/deliveries/task-one/state.json').read_text())
+  self.assertEqual(state['failure']['category'],'repair_stalled');self.assertNotIn('pr_url',state)
+
+ def test_round_cap_recovery_keeps_candidate_feedback_and_all_gates(self):
+  counts={'build':0,'review':0,'check':0}
+  def model(workspace,scratch,prompt,**kwargs):
+   if kwargs['role']=='builder':
+    counts['build']+=1
+    self.assertEqual((workspace/'app.py').read_text(),'value = '+str(counts['build']-1)+'\n')
+    if counts['build']==3:self.assertIn('Fix latest defect',prompt)
+    (workspace/'app.py').write_text('value = '+str(counts['build'])+'\n')
+   if 'Independently review full' in prompt:
+    counts['review']+=1
+    if counts['review']<=2:return '{"verdict":"changes_requested","findings":["Fix latest defect"]}'
+   return '{"verdict":"approved","findings":[]}'
+  with self.assertRaisesRegex(GateError,'Round limit'):self.execute(harness=model)
+  folder=self.root/'data/deliveries/task-one';old=json.loads((folder/'state.json').read_text())
+  self.policy['max_rounds']=None;(folder/'policy.json').write_text(json.dumps(self.policy))
+  def check(*a,**kw):
+   counts['check']+=1;return subprocess.CompletedProcess([],0,'fresh passed')
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=model),patch.object(delivery,'command',side_effect=check),patch('process_owner.alive',return_value=False):
+   result=delivery.execute(self.packet,self.policy,'task-one',emit=lambda *_:None,publish=False,resume_repair=True)
+  self.assertEqual(result['state'],'validated');self.assertEqual(result['round'],3)
+  self.assertEqual(counts,{'build':3,'review':3,'check':1})
+  delivery.git(folder/'candidate','merge-base','--is-ancestor',old['target_sha'],result['target_sha'])
+  self.assertTrue((folder/'checks-2.json').exists())
+  self.assertEqual(result['reviews']['standard']['target_sha'],result['target_sha'])
+
  def test_extra_role_is_executed_not_discarded(self):
   self.policy['workflow'].insert(1,{'stage':'advisory','role':'ux-designer'})
   self.assertEqual(self.execute()['state'],'validated')

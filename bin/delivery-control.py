@@ -155,9 +155,27 @@ def retry(issue,reason):
  b.api('PATCH','/issues/'+issue,{'status':'todo','assigneeUserId':None,'assigneeAgentId':agent,'comment':'Explicit operator retry: '+reason+'; preserved evidence: '+str(archive)})
  print('Retry queued:',issue)
 
+def resume_repair(issue,reason):
+ # Explicit migration of a stopped legacy round-cap attempt, keeping its candidate.
+ from delivery import execute
+ path=ROOT/'data/delivery-bindings'/(issue+'.json');d=json.loads(path.read_text())
+ b=Board();task=b.api('GET','/issues/'+issue)
+ if task['status'] not in ('blocked','in_progress'):raise ValueError('Task must be blocked or retain an interrupted in-progress board projection')
+ s=config();cfg=s['projects'][d['lane']]
+ if task.get('projectId')!=cfg['id']:raise ValueError('Project mismatch')
+ agent=s['agents'][d['lane']+':delivery']
+ if b.api('GET','/agents/'+agent)['status']=='running':raise ValueError('Worker still running')
+ result=execute(d['packet'],d['policy'],issue,publish=d['publish'],resume_repair=True)
+ if result['state']=='queued':return
+ if result['state'] not in ('waiting_for_merge','validated'):raise ValueError('Repair did not complete delivery gates')
+ b.api('PATCH','/issues/'+issue,{'status':'in_review' if result['state']=='waiting_for_merge' else 'done','assigneeAgentId':None,'assigneeUserId':d['owner'],'comment':'Continued preserved candidate: '+reason+'; fresh checks and independent review passed. '+result.get('pr_url','')})
+ print('Repair completed:',issue,result['state'])
+
+
 if __name__=='__main__':
  p=argparse.ArgumentParser();sp=p.add_subparsers(dest='action',required=True)
  sp.add_parser('sync-prs')
+ a=sp.add_parser('resume-repair');a.add_argument('issue');a.add_argument('--reason',required=True)
  a=sp.add_parser('retry');a.add_argument('issue');a.add_argument('--reason',required=True)
  a=sp.add_parser('roles');a.add_argument('repo')
  a=sp.add_parser('configure');a.add_argument('lane');a.add_argument('--policy')
@@ -167,5 +185,6 @@ if __name__=='__main__':
   r=resolve(args.repo);print(json.dumps({'project_roles':r['project_roles'],'roles':fingerprints(r),'workflow':r['workflow']},ensure_ascii=False,indent=2))
  elif args.action=='sync-prs':sync_prs()
  elif args.action=='configure':configure(args.lane,args.policy)
+ elif args.action=='resume-repair':resume_repair(args.issue,args.reason)
  elif args.action=='retry':retry(args.issue,args.reason)
  else:submit(args.lane,args.packet,args.publish,args.issue)

@@ -5,6 +5,7 @@ from process_owner import alive
 
 STAGES={'planning':'任务规划','building':'开发','checking':'自动检查','acceptance':'项目验收','waiting_for_merge':'合并','merged':'主线复验'}
 GUIDANCE={
+ 'repair_stalled':('修复未取得进展','候选代码回到了近期已被拒绝的同一版本。查看独立审核意见，明确新的修复策略后重试；草稿和证据保留，检查与审核必须重新执行。'),
  'provider_paused':('订阅额度或认证需要处理','先检查所用订阅的额度和登录状态；额度恢复或重新登录后再重试。可在 Harness / Token Plan 设置中选择已有订阅。'),
  'connection':('执行连接中断','确认 Linux 到所用模型服务的网络已恢复，再重试。'),
  'model_output':('阶段交接文件未通过校验','需要核对本次执行的 handoff.json，而不是修改聊天总结。代码草稿和检查记录已保留；请将诊断交给维护对话，补齐交接文件后从保存的结果或同一提交恢复检查与审核。'),

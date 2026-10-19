@@ -4,7 +4,7 @@
   "github_repo": "OWNER/REPOSITORY",
   "base_branch": "main",
   "risk": "low",
-  "max_rounds": 3,
+  "max_rounds": null,
   "allowed_paths": [
     "src/example.py"
   ],
