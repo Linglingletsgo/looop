@@ -54,7 +54,14 @@ def execute(repo,folder,probe,dependencies,fresh):
 def restored(repo,checkpoint):
  """Re-use only controller receipts whose recorded script and source still match."""
  result=[];current=source_fingerprint(repo)
- for path in sorted(pathlib.Path(checkpoint).glob('experiment-*/result.json'))[-2:]:
+ checkpoint=pathlib.Path(checkpoint)
+ paths=list(sorted(checkpoint.glob('experiment-*/result.json')))
+ report=checkpoint/'research.json'
+ if report.is_file():
+  for item in json.loads(report.read_text()).get('experiments',[])[:4]:
+   candidate=pathlib.Path(item.get('evidence_path',''))/'result.json'
+   if candidate.resolve().is_relative_to(checkpoint.parent.resolve()) and candidate.is_file() and candidate not in paths:paths.append(candidate)
+ for path in paths[-4:]:
   value=json.loads(path.read_text());workspace=path.parent/'workspace'
   if not workspace.is_dir():continue
   before=source_fingerprint(workspace);argv=value.get('argv',[])

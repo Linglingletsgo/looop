@@ -10,7 +10,8 @@ def save(path,value):
 
 def failure(exc):
  from research_evidence import EvidenceGap
- if isinstance(exc,EvidenceGap):return {'category':'research_evidence','next_action':'按证据纠正回执补齐公开来源或当前源码实验，再重新规划；不跳过核验','retryable':False}
+ from source_evidence import SourceEvidenceError
+ if isinstance(exc,(EvidenceGap,SourceEvidenceError)):return {'category':'research_evidence','next_action':'按证据纠正回执补齐公开来源或当前源码实验，再重新规划；不跳过核验','retryable':False}
  text=str(exc).lower()
  if any(s in text for s in ('needs public research','requires verified repository sources','quotation not found')):return {'category':'research_evidence','next_action':'查看引文纠正记录，核对对应来源后重新规划；不跳过证据检查','retryable':False}
  if re.search(r'\bquota\b',text) or 'provider unavailable' in text:return {'category':'provider_paused','next_action':'核验订阅额度/认证后显式恢复；不切换付费路线','retryable':False}

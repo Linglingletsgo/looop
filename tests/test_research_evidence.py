@@ -48,3 +48,8 @@ class Evidence(unittest.TestCase):
  def test_oversized_observations_rejected(self):
   script='import os\nfrom pathlib import Path\nPath(os.environ["LOOOP_EXPERIMENT_RESULT"]).write_text("x"*12001)'
   with self.assertRaisesRegex(ValueError,'12000 bytes'):probes.execute(self.repo,self.root/'probe',{**self.probe,'script':script},None,Mock())
+
+ def test_successive_retry_preserves_original_experiment_references(self):
+  checkpoint=self.root/'prior';receipt=probes.execute(self.repo,checkpoint/'experiment-1',self.probe,None,Mock())
+  resumed=self.root/'resumed';resumed.mkdir();(resumed/'research.json').write_text(json.dumps({'experiments':[receipt]}))
+  self.assertEqual(probes.restored(self.repo,resumed),[receipt])

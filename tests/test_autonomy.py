@@ -42,6 +42,25 @@ class Autonomy(unittest.TestCase):
    autonomy.tick('test');self.assertEqual(run.call_count,2)
    state=self.root/'data/deliveries/delivery-issue/state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
    autonomy.tick('test');self.assertEqual(run.call_count,2)
+ def test_invalid_pm_quote_corrects_before_binding_without_research_repeat(self):
+  import copy
+  bad=copy.deepcopy(self.value);bad['evidence'][0]['quote']='Fabricated quotation'
+  self.setup_tick();calls=[];responses=[json.dumps(bad),json.dumps(self.value),'{"verdict":"approved","findings":[],"reason":"Within authorized existing behavior"}']
+  class Board:
+   def api(self,method,path,data=None):
+    calls.append((method,path,data))
+    if path=='/auth/get-session':return {'user':{'id':'owner'}}
+    if method=='POST':return {'id':'delivery-issue' if data['status']=='backlog' else 'pm-issue','identifier':'T-1'}
+  def model(*a,**k):return responses.pop(0)
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
+   autonomy.tick('test');self.assertEqual(run.call_count,3)
+   self.research_mock.assert_called_once()
+   self.assertEqual(json.loads(next((self.root/'data/autonomy/test').glob('*/pm-recovery.json')).read_text())['state'],'recovered')
+   binding=json.loads((self.root/'data/delivery-bindings/delivery-issue.json').read_text());self.assertEqual(binding['authorization']['type'],'project_mandate')
+   autonomy.tick('test');self.assertEqual(run.call_count,3)
+   state=self.root/'data/deliveries/delivery-issue/state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
+   autonomy.tick('test');self.assertEqual(run.call_count,3)
+
  def test_no_work_creates_no_delivery(self):
   self.setup_tick();calls=[]
   class Board:

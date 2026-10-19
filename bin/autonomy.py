@@ -15,6 +15,7 @@ from product_goals import completion_coverage
 from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS,summary as goal_summary
 from product_research import perform as research,brief as research_brief,ResearchIncomplete
 from research_evidence import proposal_supported
+from source_evidence import quote as source_quote
 from task_selection import backlog_sources,backlog_items,check_source,instructions
 
 def planning_state(shared,loop):
@@ -133,8 +134,7 @@ def checked_proposal(value,mandate,repo,sha,history):
   from project_adapter import safe_file
   safe_file(repo,name)
   if path.is_symlink() or not path.is_file():raise ValueError('Invalid evidence file')
-  quote=item['quote']
-  if not isinstance(quote,str) or len(quote)<20 or len(quote)>2000 or quote not in path.read_text():raise ValueError('Source quote not found')
+  source_quote(repo,name,item.get('quote'))
  key=hashlib.sha256(json.dumps({'requirements':packet['requirements'],'acceptance':packet['acceptance'],'paths':sorted(packet['allowed_paths'])},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
  if key in history:raise ValueError('Duplicate Packet fingerprint')
  return packet,key
@@ -334,6 +334,15 @@ def tick(lane):
      if value.get('action')=='goal_complete':
       if not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
       completion_coverage(value.get('completion_evidence'),current_goal['success_criteria'])
+      for e in value['completion_evidence']:source_quote(workspace,e.get('path'),e.get('quote'))
+      reason=value.get('reason')
+      if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
+     else:
+      checked=checked_proposal(value,mandate,workspace,sha,history)
+      if checked:
+       validate(checked[0],policy)
+       if not current_goal:check_source(value,mode['selection_mode'],selected,items)
+       goal_proposal(value.get('product_goal'),current_goal)
     if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nThe research phase has ended. If supported, now define the implementation Packet within the mandate; an earlier investigation-only stopping condition does not require another planning cycle. Use controller experiment receipts as observations, not merge approval.\nVerified research brief: '+json.dumps(research_brief(report or (current_goal or {}).get('research')),ensure_ascii=False),fresh,validate=validate_pm,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route)
     save(folder/'proposal.json',value)
     if value.get('action')=='goal_complete':
@@ -342,7 +351,7 @@ def tick(lane):
      completion_coverage(evidence,current_goal['success_criteria'])
      from project_adapter import safe_file
      for e in evidence:
-      if not isinstance(e.get('quote'),str) or len(e['quote'])<20 or e['quote'] not in safe_file(workspace,e.get('path','')).read_text():raise ValueError('Product completion evidence must match current source')
+      source_quote(workspace,e.get('path'),e.get('quote'))
      reason=value.get('reason')
      if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
      store.finish_goal(lane,current_goal['id'],reason,evidence,revision)

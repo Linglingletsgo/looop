@@ -74,7 +74,7 @@ def verify(report,repo,public_required=False,kind="new_requirement",experiments=
  for source in sources:
   if not isinstance(source,dict):raise ValueError('Research source must be an object')
   quote=source.get('quote')
-  if not isinstance(quote,str) or not 20<=len(quote)<=2000:raise ValueError('Research requires exact source quotations')
+  if not isinstance(quote,str) or not quote.strip() or len(quote)>2000:raise ValueError('Research requires exact source quotations')
   if source.get('kind')=='repository':
    name=source.get('path');content=safe_file(repo,name).read_text();address=name
   elif source.get('kind')=='public':
