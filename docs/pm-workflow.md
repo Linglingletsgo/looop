@@ -21,3 +21,7 @@ looop 负责队列、并发、启动原生 Harness、结果文件结构与身份
 独立对话使用项目内 `project-session.py context/start/progress/finish`，其文件写入使用相同版本校验和锁。Agent 通过角色结果文件记录执行结果，调度器只验证所属任务并流转。不要直接改看板或数据库伪造审核通过，不将历史 handoff 当作当前授权。
 
 当前状态覆盖更新；事件、日志和运行产物按 retention.json 保留。文件与索引的提交使用恢复标记，异常时保留现场。迁移前状态保存在 data/backups，不删除原项目。
+
+## Magpie 子代理资源库
+
+在 Linux 的 looop 目录运行 `python3 bin/sync-magpie-subagents.py`，将 `default-roles/` 的 8 个默认角色更新到 Magpie 原生资源库，并由 Magpie 分发到其支持的 Codex 和 Claude Code。条目统一加 `looop-` 前缀，项目角色优先，角色可用不等于自动加入执行流程。保留已有模型、账号及其它原生角色；OMP 当前不在 Magpie 支持的子代理分发目标内。修改前备份到 `data/backups/`，同步后回读核对；不将提示词塞进共享全局指令。
