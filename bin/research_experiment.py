@@ -1,8 +1,7 @@
-"""Synthetic research probes run on disposable source copies, never delivery workspaces."""
-import hashlib,json,pathlib,shutil,subprocess
+"""Research experiment dispatch to a native Harness Agent, not a script runner."""
+import hashlib,json,pathlib
 from lifecycle import save
 from repository import source_fingerprint
-from sandbox import workspace_environment,execution_environment
 
 
 def validate(probe):
@@ -12,67 +11,35 @@ def validate(probe):
 
 
 def execute(repo,folder,probe,dependencies,fresh):
- validate(probe);fresh();folder=pathlib.Path(folder);workspace=folder/'workspace'
- folder.mkdir(parents=True,exist_ok=True)
- shutil.copytree(repo,workspace,ignore=shutil.ignore_patterns('.git','node_modules','.env*','.venv','__pycache__','.next','coverage','secrets','var'),symlinks=True)
- # Snapshots are controller-created files; reject unexpected links before attaching dependencies.
- if any(p.is_symlink() for p in workspace.rglob('*')):raise ValueError('Research snapshot must not contain symlinks')
- runtime=probe['runtime'];name={'python':'.looop-research-probe.py','node':'.looop-research-probe.mjs','node_ts':'.looop-research-probe.ts'}[runtime]
- script=workspace/name
- if script.exists():raise ValueError('Research probe path already exists')
- script.write_text(probe['script']);before=source_fingerprint(workspace)
- result_path=folder.resolve()/'observations.json'
- argv={'python':['python3',name],'node':['node',name],'node_ts':['node','--import','tsx',name]}[runtime]
- # Probes receive runtime discovery, not provider, database, mail or scheduler credentials.
- base=execution_environment();env={k:base[k] for k in ('PATH','LANG','LC_ALL','TZ') if k in base}
- env.update(HOME=str(folder.resolve()),PYTHONDONTWRITEBYTECODE='1',LOOOP_EXPERIMENT_RESULT=str(result_path))
+ validate(probe);fresh();folder=pathlib.Path(folder)
+ from sandbox import run
+ from planning_runtime import invoke
+ from execution_settings import read,route
+ from runtime import ROOT
+ from roles import resolve,contract
+ registry=resolve(repo);role='qa' if 'qa' in registry['project_roles'] or 'reviewer' not in registry['project_roles'] else 'reviewer'
+ prompt=contract(registry,role)+'\nInvestigate this synthetic reproduction using the native Harness and linked project dependencies. You own execution and interpretation. Use fixed model stubs and in-memory receivers; no production database, network, external models, mail or credentials. Do not modify project source or install dependencies. Write temporary scripts and bounded execution artifacts ONLY in the supplied handoff directory. Adapt the proposed script if necessary, preserving the question and controls; report what you actually ran and why. Requested experiment: '+json.dumps(probe,ensure_ascii=False)+'\nWrite handoff.json result {"exit_code": integer, "output": "bounded actual observation", "observations": {...}, "evidence_path": "actual artifact path"}. Never claim execution from source inspection. A nonzero exit or missing prerequisite must remain visible.'
+ def validate_result(v):
+  if not isinstance(v,dict) or type(v.get('exit_code')) is not int:raise ValueError('Experiment requires integer exit_code')
+  for key in ('output','evidence_path'):
+   if not isinstance(v.get(key),str) or not v[key].strip() or len(v[key])>12000:raise ValueError('Experiment requires bounded '+key)
+  if len(json.dumps(v.get('observations'),ensure_ascii=False).encode())>12000:raise ValueError('Experiment observations exceed 12000 bytes')
+ value=invoke(run,repo,folder/'agent',prompt,fresh,validate=validate_result,role='readonly',timeout=None,dependencies=dependencies,execution_route=route(read(ROOT),'review','codex'))
  fresh()
- with workspace_environment(workspace,dependencies):
-  process=subprocess.Popen(argv,cwd=workspace,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-  tail=bytearray()
-  try:
-   while block:=process.stdout.read(65536):
-    tail.extend(block)
-    if len(tail)>12000:del tail[:-12000]
-   process.wait()
-  finally:
-   if process.poll() is None:process.terminate();process.wait()
-   process.stdout.close()
-  output=tail.decode(errors='ignore');(folder/'output.log').write_text(output)
-
- fresh()
- if source_fingerprint(workspace)!=before:raise ValueError('Research experiment modified source; evidence rejected')
- observations=None
- if result_path.exists() or result_path.is_symlink():
-  if result_path.is_symlink() or not result_path.is_file() or result_path.stat().st_size>12000:raise ValueError('Experiment observations must be a regular JSON file of at most 12000 bytes')
-  observations=json.loads(result_path.read_text())
- receipt={'observations':observations,'purpose':probe['purpose'],'argv':argv,'exit_code':process.returncode,'output':output,'evidence_path':str(folder),'script_sha256':hashlib.sha256(probe['script'].encode()).hexdigest(),'source_fingerprint':hashlib.sha256(json.dumps(before,sort_keys=True).encode()).hexdigest(),'scope':'synthetic isolated probe; not delivery validation or approval'}
- save(folder/'result.json',receipt)
- return receipt
+ receipt={'executor':'native-agent','role':role,'purpose':probe['purpose'],'argv':['native-harness',role],'exit_code':value['exit_code'],'output':value['output'],'observations':value.get('observations'),'evidence_path':str(folder.resolve()),'agent_evidence_path':value['evidence_path'],'script_sha256':hashlib.sha256(probe['script'].encode()).hexdigest(),'source_fingerprint':hashlib.sha256(json.dumps(source_fingerprint(repo),sort_keys=True).encode()).hexdigest(),'scope':'Agent research conclusion; not merge approval'}
+ save(folder/'result.json',receipt);return receipt
 
 
 def restored(repo,checkpoint):
- """Re-use only controller receipts whose recorded script and source still match."""
- result=[];current=source_fingerprint(repo)
- checkpoint=pathlib.Path(checkpoint)
- paths=list(sorted(checkpoint.glob('experiment-*/result.json')))
+ """Return prior same-source Agent receipts as context; Agents assess their relevance."""
+ checkpoint=pathlib.Path(checkpoint);paths=list(sorted(checkpoint.glob('experiment-*/result.json')))
  report=checkpoint/'research.json'
  if report.is_file():
   for item in json.loads(report.read_text()).get('experiments',[])[:4]:
-   candidate=pathlib.Path(item.get('evidence_path',''))/'result.json'
-   if candidate.resolve().is_relative_to(checkpoint.parent.resolve()) and candidate.is_file() and candidate not in paths:paths.append(candidate)
- for path in paths[-4:]:
-  value=json.loads(path.read_text());workspace=path.parent/'workspace'
-  if not workspace.is_dir():continue
-  before=source_fingerprint(workspace);argv=value.get('argv',[])
-  if not argv:continue
-  name=argv[-1]
-  if pathlib.PurePath(name).name!=name or not name.startswith('.looop-research-probe.'):continue
-  script=workspace/name
-  if script.is_symlink() or not script.is_file():continue
-  if hashlib.sha256(script.read_bytes()).hexdigest()!=value.get('script_sha256'):continue
-  if hashlib.sha256(json.dumps(before,sort_keys=True).encode()).hexdigest()!=value.get('source_fingerprint'):continue
-  before.pop(name,None)
-  if current!=before:continue
-  result.append(value)
+   p=pathlib.Path(item.get('evidence_path',''))/'result.json'
+   if p.resolve().is_relative_to(checkpoint.parent.resolve()) and p.is_file() and p not in paths:paths.append(p)
+ result=[];current=hashlib.sha256(json.dumps(source_fingerprint(repo),sort_keys=True).encode()).hexdigest()
+ for p in paths[-4:]:
+  value=json.loads(p.read_text())
+  if value.get('executor')=='native-agent' and value.get('source_fingerprint')==current:result.append(value)
  return result

@@ -13,7 +13,7 @@ def snapshot(repo,local):
  local_work={}
  for event in pending:
   c=event['command'];local_work[c['id']]={'status':{'start':'active','progress':'active','finish':'completed','cancel':'cancelled'}[c['action']],'summary':c['summary'],'verification':'self_reported','synchronization':'pending'}
- return {'project_state':cached,'local_pending_work':local_work,'pending_events':len(pending),'linked':bool(link),'notice':'Cached state; read again before decisions. Offline records do not reserve scheduler execution.'}
+ return {'state_file':str(pathlib.Path(link['runtime'])/'data/project-state'/(link['lane']+'.current.json')) if link else None,'project_state':cached,'local_pending_work':local_work,'pending_events':len(pending),'linked':bool(link),'notice':'Cached state; read again before decisions. Offline records do not reserve scheduler execution.'}
 
 def refresh(repo,local):
  if not (local/'link.json').exists():return snapshot(repo,local)

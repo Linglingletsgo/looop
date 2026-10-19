@@ -72,7 +72,7 @@ def saved_result(report,stage='build'):
 
 def check_context(target,checks,receipt):
  # Successful output is evidence on disk, not repeated prompt context.
- return ('\nController check receipt: '+json.dumps({'target_sha':target,'receipt_path':str(receipt),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in checks]},ensure_ascii=False)+
+ return ('\nVerification Agent receipt: '+json.dumps({'target_sha':target,'receipt_path':str(receipt),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in checks]},ensure_ascii=False)+
   '\nThese checks already ran on this exact target. Read the receipt for full output when needed. Run additional targeted checks for a specific suspected defect or project requirement; do not repeat the full suite solely for confirmation.\n')
 
 def review_navigation(candidate,baseline,target,previous,folder):
@@ -214,7 +214,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    (root/'roles.json').write_text(json.dumps(fingerprints(registry),ensure_ascii=False,indent=2))
    rules='\n'.join('PROJECT RULES '+n+'\n'+(baseline/n).read_text() for n in dict.fromkeys(['AGENTS.md','AGENT.md','Agent.md','agents.md','docs/project/single-developer-workflow.md','docs/project/agent-os-convergence-policy.md',*policy.get('workflow_evidence',{})]) if (baseline/n).is_file())
    dependencies=pathlib.Path(policy['dependencies']) if policy.get('dependencies') else None
-   context='Use the existing project environment and exact configured checks; do not install dependencies. Installed host tools and linked project dependencies are available. Read targeted source ranges before implementing. Controller checks: '+json.dumps(policy['checks'])+'\n'
+   context='Use the existing project environment and exact configured checks; do not install dependencies. Installed host tools and linked project dependencies are available. Read targeted source ranges before implementing. Checks for the verification Agent: '+json.dumps(policy['checks'])+'\n'
    context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(packet,ensure_ascii=False)+'\nThe current directory is a controller-verified baseline snapshot. Use the selected native harness and project environment. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
    plans=[]
    for step in policy['workflow']:
@@ -243,7 +243,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
      persist('building')
      workspace=snapshot(candidate,git(candidate,'rev-parse','HEAD').decode().strip(),root/f'build-{roundno}')
      before=tree(workspace)
-     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Write handoff.json result {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; the controller runs the full configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
+     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Write handoff.json result {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; a verification Agent runs the configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
      if check_result(build_result)['verdict']=='blocked':raise GateError('Builder blocked: '+build_result)
      state.pop('pending_builder',None)
      after=tree(workspace);changed={p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)}

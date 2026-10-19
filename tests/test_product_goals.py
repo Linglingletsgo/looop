@@ -59,7 +59,7 @@ class Research(unittest.TestCase):
   plan={'question':'Which comparison gap is evidenced?','stop_condition':'Current code and one counterexample checked','skills':[str(p.relative_to(self.repo))]};prompts=[]
   def model(work,scratch,prompt,**kw):prompts.append(prompt);return json.dumps(plan if len(prompts)==1 else report)
   value=research.perform(model,self.repo,self.repo/'run','PM research-only','No dispatch',lambda:None,{'harness':'codex','provider':'codex'})
-  self.assertIn(p.read_text(),prompts[1]);self.assertEqual(len(value['loaded_skills']),1);self.assertNotIn('content',value['loaded_skills'][0]);self.assertTrue(value['sources'][0]['sha256'])
+  self.assertIn(p.read_text(),prompts[1]);self.assertEqual(len(value['loaded_skills']),1);self.assertNotIn('content',value['loaded_skills'][0]);self.assertEqual(value['evidence_basis']['assessed_by'],'product-manager-agent')
   report['skill_usage']=[];prompts.clear()
   with self.assertRaisesRegex(ValueError,'impact'):research.perform(model,self.repo,self.repo/'retry','PM','Context',lambda:None,{'harness':'omp','provider':'codex'})
  def test_no_skills_is_explicit_not_invented_and_missing_files_fail(self):

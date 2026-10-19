@@ -4,11 +4,12 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import sandbox
 from executor import command
 class Runtime(unittest.TestCase):
- def test_checks_use_real_cwd_and_host_tools(self):
-  with tempfile.TemporaryDirectory() as d:
+ def test_project_checks_are_dispatched_not_executed_by_scheduler(self):
+  import executor
+  with tempfile.TemporaryDirectory() as d,patch.object(executor,'ROOT',pathlib.Path(d)),patch('sandbox.run',return_value=json.dumps({'argv':['python3','test.py'],'exit_code':0,'output':'agent observed pass','evidence_path':'artifact.log'})) as run:
+   result=command(d,['python3','test.py'])
+   self.assertEqual(result.returncode,0);self.assertEqual(run.call_count,1);self.assertIn('Execute the requested project check',run.call_args.args[2]);self.assertEqual(run.call_args.kwargs['role'],'readonly')
 
-   with patch.dict(os.environ,{'EXPECTED_CWD':d}):result=command(d,['python3','-c',"import os,shutil;assert os.getcwd()==os.environ['EXPECTED_CWD'];assert shutil.which('node');open('owned','w').write('ok')"],writable=True)
-   self.assertEqual(result.returncode,0,result.stdout);self.assertEqual((pathlib.Path(d)/'owned').read_text(),'ok')
  def test_native_argv_no_gateway_no_key_in_argv_exact_flash(self):
   with tempfile.TemporaryDirectory() as d:
    root=pathlib.Path(d);(root/'secrets').mkdir();(root/'secrets/commandcode.key').write_text('fixture-secret')
@@ -56,10 +57,13 @@ class Runtime(unittest.TestCase):
    with patch.object(sandbox,'ROOT',root),patch.object(sandbox,'invocation',return_value=(['python3','-c',code],os.environ.copy(),'test')):
     result=sandbox.run(work,scratch,'test',execution_route={'harness':'claude','provider':'claude_subscription'})
    self.assertEqual(result,'{}');self.assertLessEqual((scratch/'events.jsonl').stat().st_size,4*1024*1024)
- def test_check_cannot_change_reviewed_source(self):
+ def test_check_agent_cannot_change_reviewed_source(self):
   with tempfile.TemporaryDirectory() as d:
    root=pathlib.Path(d);(root/'source.py').write_text('original')
-   with self.assertRaisesRegex(RuntimeError,'modified source'):command(root,['python3','-c',"open('source.py','w').write('changed')"])
+   # Source immutability is a native Harness dispatch invariant.
+   code="import pathlib,sys;sys.stdin.read();pathlib.Path('source.py').write_text('changed');print('{}')"
+   with patch.object(sandbox,'ROOT',root),patch.object(sandbox,'invocation',return_value=(['python3','-c',code],os.environ.copy(),'fixture')):
+    with self.assertRaisesRegex(RuntimeError,'modified source'):sandbox.run(root,root/'run','check',execution_route={'harness':'claude','provider':'claude_subscription'})
 
  def test_actual_claude_auth_status_shape(self):
   for method,provider,expected in [('claude.ai','firstParty',True),('api_key','firstParty',False),('oauth_token','firstParty',True),('claude.ai','bedrock',False)]:
@@ -71,8 +75,6 @@ class Runtime(unittest.TestCase):
    root=pathlib.Path(d);browser=root/'data/browsers/chromium-fixture/chrome-linux64/chrome';browser.parent.mkdir(parents=True);browser.write_text('fixture')
    with patch.object(sandbox,'ROOT',root),patch.dict(os.environ,{},clear=True):
     self.assertEqual(sandbox.execution_environment()['CHROMIUM_PATH'],str(browser))
-    check=command(root,['/usr/bin/python3','-c',"import os;print(os.environ['CHROMIUM_PATH'])"])
-    self.assertEqual(check.returncode,0,check.stdout);self.assertEqual(check.stdout.strip(),str(browser))
     with patch.object(sandbox,'claude_subscription',return_value=True),patch.object(sandbox.shutil,'which',return_value='/cli'):
      _,env,_=sandbox.invocation(root,root,{'harness':'claude','provider':'claude_subscription'})
      self.assertEqual(env['CHROMIUM_PATH'],str(browser))

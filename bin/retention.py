@@ -46,9 +46,9 @@ def maintain(root):
  for lane in store.lanes():compact_state(store,lane,policy['event_limit'])
  # Completed model transcripts/workspaces are disposable; keep compact outcome receipts.
  candidates=[];removed=[];total=0
- for category in ('deliveries','autonomy','plans'):
+ for category in ('deliveries','autonomy','plans','verification-agents','agent-checks'):
   base=root/'data'/category
-  paths=base.glob('*/*/state.json') if category=='autonomy' else base.glob('*/state.json')
+  paths=base.glob('*/*/state.json') if category in ('autonomy','agent-checks') else base.glob('*/state.json')
   if category=='plans':paths=base.glob('*/result.json')
   for statepath in paths:
    folder=statepath.parent
@@ -71,7 +71,7 @@ def maintain(root):
    elif child.is_dir():shutil.rmtree(child)
   total-=size;removed.append(str(folder.relative_to(root)))
  # Bound stdout/model trace files even for long-lived services and active model runs.
- for category in ('deliveries','autonomy','plans','runs'):
+ for category in ('deliveries','autonomy','plans','runs','verification-agents','agent-checks'):
   base=root/'data'/category
   if base.exists():
    for path in base.rglob('events.jsonl'):

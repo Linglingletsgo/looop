@@ -1,5 +1,5 @@
 """Disposable repository integration: inherited config -> builder -> real checks -> reviewer."""
-import json,pathlib,sys,unittest
+import json,pathlib,sys,unittest,subprocess
 from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import delivery,test_delivery
@@ -17,5 +17,5 @@ class InheritedDelivery(unittest.TestCase):
    seen.append(kwargs['role'])
    if kwargs['role']=='builder':(pathlib.Path(workspace)/'app.py').write_text('value = 1\n')
    return '{"verdict":"approved","findings":[]}'
-  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=model):result=delivery.execute(self.packet,policy,'inherited-delivery',emit=lambda *_:None,publish=False)
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=model),patch.object(delivery,'command',return_value=subprocess.CompletedProcess([],0,'Verification Agent fixture pass')):result=delivery.execute(self.packet,policy,'inherited-delivery',emit=lambda *_:None,publish=False)
   self.assertEqual(result['state'],'validated');self.assertEqual(seen,['builder','readonly']);self.assertEqual((self.repo/'app.py').read_text(),'value = 0\n')

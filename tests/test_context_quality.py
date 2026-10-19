@@ -54,7 +54,7 @@ class DeliveryInputs(unittest.TestCase):
   result=self.execute(harness=harness)
   for name,prompt in prompts:
    if name.startswith(('reviewer-','acceptance-')):
-    self.assertIn('Controller check receipt',prompt);self.assertIn(result['target_sha'],prompt)
+    self.assertIn('Verification Agent receipt',prompt);self.assertIn(result['target_sha'],prompt)
     self.assertNotIn('output_tail',prompt);self.assertIn('receipt_path',prompt);self.assertNotIn('BUILDER-PRIVATE-THOUGHT',prompt)
     receipt=self.root/'data/deliveries/task-one/checks-1.json'
     self.assertIn(str(receipt),prompt);self.assertEqual(json.loads(receipt.read_text())[0]['output'],'passed')

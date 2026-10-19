@@ -90,7 +90,10 @@ class Selection(unittest.TestCase):
   self.assertEqual(inherited_mandate(inherited_policy(self.repo))['backlog_paths'],['spec.py'])
   adapter['execution_enabled']=False;(self.repo/'.agent/project.json').write_text(json.dumps(adapter))
   with self.assertRaisesRegex(ValueError,'观察'):inherited_policy(self.repo)
- def test_actual_npm_script_in_host_environment(self):
+ def test_npm_check_dispatch_passes_existing_dependencies_to_agent(self):
+  import executor
   from executor import command
-  (self.repo/'node_modules').mkdir();(self.repo/'package.json').write_text(json.dumps({'scripts':{'test':'node -e "if(!process.env.HOME.startsWith(\'/home/\'))process.exit(2);console.log(\'fixture passed\')"'}}))
-  result=command(self.repo,['npm','run','test'],dependencies=self.repo/'node_modules');self.assertEqual(result.returncode,0,result.stdout);self.assertIn('fixture passed',result.stdout)
+  argv=['npm','run','test'];deps=self.repo/'node_modules';deps.mkdir()
+  with patch.object(executor,'ROOT',self.root),patch('sandbox.run',return_value=json.dumps({'argv':argv,'exit_code':0,'output':'fixture passed','evidence_path':'npm.log'})) as run:
+   result=command(self.repo,argv,dependencies=deps)
+  self.assertEqual(result.returncode,0);self.assertEqual(run.call_args.kwargs['dependencies'],deps)

@@ -49,7 +49,7 @@ class RecoveryCycle(unittest.TestCase):
     run(['git','--git-dir',str(bare),'update-ref','refs/heads/'+policy['base_branch'],target],check=True);merged=True
     return subprocess.CompletedProcess(argv,0,'')
    return run(argv,*a,**kw)
-  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=native),patch.object(delivery,'git',side_effect=local_git),patch.object(subprocess,'check_output',side_effect=github_output),patch.object(subprocess,'run',side_effect=github_run):
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=native),patch.object(delivery,'command',return_value=subprocess.CompletedProcess([],0,'Verifier Agent fixture pass')),patch.object(delivery,'git',side_effect=local_git),patch.object(subprocess,'check_output',side_effect=github_output),patch.object(subprocess,'run',side_effect=github_run):
    with self.assertRaises(ValueError):delivery.execute(packet,policy,'delivery-issue',emit=lambda *_:None)
    folder=self.root/'data/deliveries/delivery-issue';failed=json.loads((folder/'state.json').read_text());self.assertEqual(failed['failed_stage'],'review_standard');self.assertEqual(counts['create'],0)
    repaired=True
@@ -61,7 +61,7 @@ class RecoveryCycle(unittest.TestCase):
    def refresh_git(repo,*args):
     if args==('remote','get-url','origin'):return b'git@github.com:synthetic/recovery.git\n'
     return git(repo,*args)
-   with patch('runtime.ROOT',self.root),patch.object(control,'ROOT',self.root),patch.object(control,'Board',self.board()),patch.object(lifecycle,'git',side_effect=refresh_git):control.sync_prs();control.sync_prs()
+   with patch('runtime.ROOT',self.root),patch.object(control,'ROOT',self.root),patch.object(control,'Board',self.board()),patch.object(lifecycle,'git',side_effect=refresh_git),patch.object(lifecycle,'command',return_value=subprocess.CompletedProcess([],0,'Verifier Agent mainline fixture pass')):control.sync_prs();control.sync_prs()
   final=json.loads((folder/'state.json').read_text());self.assertEqual(final['mainline_verified'],state['target_sha']);self.assertEqual(final['state'],'merged')
   self.store.transition('test','delivery-issue',phase_of(final),{'mainline_verified':final['mainline_verified']},import_existing=True)
   self.assertEqual(self.store.read('test')['tasks']['delivery-issue']['phase'],'completed');self.assertEqual(counts,{'builder':1,'create':1,'merge':1})

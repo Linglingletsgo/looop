@@ -1,5 +1,6 @@
 """Versioned project state. External intent commands and controller transitions are distinct."""
-import contextlib,hashlib,json,pathlib,re,sqlite3,time,uuid
+import contextlib,fcntl,hashlib,json,pathlib,re,sqlite3,time,uuid
+from lifecycle_io import save as save_document
 
 class Conflict(ValueError):pass
 class Held(ValueError):pass
@@ -30,23 +31,57 @@ class Store:
    mapping=json.loads(self.locations.read_text())
    if lane in mapping:return pathlib.Path(mapping[lane])
   return self.path
+ def document(self,lane):
+  return self.database(lane).parent/(valid_lane(lane)+'.current.json')
  @contextlib.contextmanager
  def connection(self,lane=None):
   path=self.database(lane);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-  c=sqlite3.connect(path,timeout=30);c.row_factory=sqlite3.Row
-  c.executescript("""CREATE TABLE IF NOT EXISTS projects(lane TEXT PRIMARY KEY,doc TEXT NOT NULL);
+  with (path.parent/'.state.lock').open('a') as handle:
+   fcntl.flock(handle,fcntl.LOCK_EX)
+   c=sqlite3.connect(path,timeout=30);c.row_factory=sqlite3.Row
+   c.executescript("""CREATE TABLE IF NOT EXISTS projects(lane TEXT PRIMARY KEY,doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(lane TEXT,revision INTEGER,request_id TEXT,hash TEXT,event TEXT NOT NULL,created REAL,PRIMARY KEY(lane,revision),UNIQUE(lane,request_id));
 CREATE TABLE IF NOT EXISTS outbox(lane TEXT,revision INTEGER,delivered INTEGER DEFAULT 0,PRIMARY KEY(lane,revision));
 CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY KEY(lane,item));""")
-  path.chmod(0o600)
-  try:
-   yield c;c.commit()
-   if lane:
-    row=c.execute('SELECT doc FROM projects WHERE lane=?',(lane,)).fetchone()
-    if row:
-     snapshot=path.parent/'current.json';tmp=snapshot.with_name('.current-'+uuid.uuid4().hex+'.tmp');tmp.write_text(row['doc']);tmp.chmod(0o600);tmp.replace(snapshot)
-  except BaseException:c.rollback();raise
-  finally:c.close()
+   path.chmod(0o600);pending=path.parent/'.state-pending.json'
+   try:
+    if pending.exists():
+     marker=json.loads(pending.read_text());row=c.execute('SELECT doc FROM projects WHERE lane=?',(marker['lane'],)).fetchone()
+     if row and json.loads(row['doc'])==marker['doc']:save_document(self.document(marker['lane']),marker['doc'])
+     pending.unlink()
+    if lane:
+     docpath=self.document(lane)
+     if docpath.exists():
+      doc=json.loads(docpath.read_text())
+      if doc.get('project')!=lane or doc.get('schema_version')!=1 or type(doc.get('revision')) is not int or len(json.dumps(doc).encode())>2097152:raise Conflict('Invalid project current-state document; preserve and repair it explicitly')
+      for field,kind in (('tasks',dict),('intents',dict),('config',dict)):
+       if not isinstance(doc.get(field),kind):raise Conflict('Invalid current-state field: '+field)
+      cached=c.execute('SELECT doc FROM projects WHERE lane=?',(lane,)).fetchone()
+      if cached:
+       previous=json.loads(cached['doc'])
+       if doc['revision']<previous['revision'] or doc['revision']==previous['revision'] and doc!=previous:raise Conflict('Current-state file revision conflicts with cached index; use revision-checked project tools')
+       if doc['revision']>previous['revision']:
+        event={'type':'file_state_update','source':'project-file','data':{'revision':doc['revision']}}
+        c.execute('INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?)',(lane,doc['revision'],'file-state-'+str(doc['revision']),digest(doc),json.dumps(event),time.time()))
+        c.execute('INSERT OR IGNORE INTO outbox(lane,revision) VALUES (?,?)',(lane,doc['revision']))
+      c.execute('INSERT OR REPLACE INTO projects VALUES (?,?)',(lane,json.dumps(doc,ensure_ascii=False)));c.commit()
+    yield c
+    if lane:
+     row=c.execute('SELECT doc FROM projects WHERE lane=?',(lane,)).fetchone()
+     if row:save_document(pending,{'lane':lane,'doc':json.loads(row['doc'])})
+    c.commit()
+    if lane and row:
+     doc=json.loads(row['doc']);save_document(self.document(lane),doc)
+     # Compatibility path is a read-only alias to the single authoritative document.
+     alias=path.parent/'current.json'
+     if not alias.is_symlink():
+      if alias.exists():alias.replace(path.parent/'current.migrated.json')
+      alias.symlink_to(self.document(lane).name)
+     if pending.exists():pending.unlink()
+   except BaseException:
+    c.rollback();raise
+   finally:c.close()
+
  def lanes(self):
   with self.connection() as c:lanes={r[0] for r in c.execute('SELECT lane FROM projects')}
   if self.locations.exists():lanes.update(json.loads(self.locations.read_text()))

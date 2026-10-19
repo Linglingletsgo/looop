@@ -20,12 +20,12 @@ class Refresh(unittest.TestCase):
   if args==('remote','get-url','origin'):return b'git@github.com:synthetic/repo.git\n'
   return subprocess.check_output(['git','-C',str(repo),*args],stderr=subprocess.DEVNULL)
  def test_verified_mainline_fastforwards_only_managed_checkout(self):
-  with patch.object(lifecycle,'git',side_effect=self.git):result=lifecycle.refresh(self.root,'lane',self.binding,self.new)
+  with patch.object(lifecycle,'git',side_effect=self.git),patch.object(lifecycle,'command',return_value=subprocess.CompletedProcess([],0,'Verifier Agent pass')):result=lifecycle.refresh(self.root,'lane',self.binding,self.new)
   self.assertEqual(result['status'],'passed');self.assertEqual(self.git(self.repo,'rev-parse','HEAD').decode().strip(),self.new)
   profile=json.loads((self.root/'data/control.json').read_text())['projects']['lane']['profile'];self.assertEqual(json.loads((self.root/'profiles'/profile).read_text())['repository_revision'],self.new)
  def test_failed_postmerge_check_does_not_advance_baseline(self):
   self.binding['policy']['checks']=[['python3','-c','raise Exception("regression")']]
-  with patch.object(lifecycle,'git',side_effect=self.git),self.assertRaisesRegex(ValueError,'verification failed'):lifecycle.refresh(self.root,'lane',self.binding,self.new)
+  with patch.object(lifecycle,'git',side_effect=self.git),patch.object(lifecycle,'command',return_value=subprocess.CompletedProcess([],1,'Verifier Agent failure')),self.assertRaisesRegex(ValueError,'verification failed'):lifecycle.refresh(self.root,'lane',self.binding,self.new)
   self.assertEqual(self.git(self.repo,'rev-parse','HEAD').decode().strip(),self.old)
  def test_original_workspace_cannot_be_refreshed(self):
   self.binding['policy']['repo']=str(self.root)

@@ -34,20 +34,7 @@ class Continuous(unittest.TestCase):
   p.write_text(json.dumps({'sha':self.sha,'status':'passed','checks':[{'argv':['node','test'],'exit_code':0,'output':'PRIVATE-NOISE'}]}))
   evidence=autonomy.planning_evidence(self.root,'test',self.repo,self.sha,None)
   self.assertIn('mainline',evidence);self.assertNotIn('PRIVATE-NOISE',json.dumps(evidence))
- def test_goal_checks_are_unioned_executed_and_cached_on_exact_sha(self):
-  evidence={'mainline':{'checks':[{'argv':['unit'],'exit_code':0}]},'deliveries':[{'checks':[{'argv':['unit'],'exit_code':0},{'argv':['integration'],'exit_code':0}]}]}
-  with patch('executor.command',return_value=subprocess.CompletedProcess([],0,'passed')) as run:
-   result=autonomy.verify_goal(self.root,'test',self.repo,self.sha,evidence,{'dependencies':'deps'})
-   self.assertEqual(run.call_count,2);self.assertEqual(result['status'],'passed')
-   autonomy.verify_goal(self.root,'test',self.repo,self.sha,evidence,{'dependencies':'deps'});self.assertEqual(run.call_count,2)
-   autonomy.verify_goal(self.root,'test',self.repo,'new',evidence,{'dependencies':'deps'});self.assertEqual(run.call_count,4)
- def test_failed_goal_check_never_becomes_completion_evidence(self):
-  evidence={'mainline':{'checks':[{'argv':['integration'],'exit_code':0}]},'deliveries':[]}
-  with patch('executor.command',return_value=subprocess.CompletedProcess([],1,'failure')):
-   with self.assertRaisesRegex(ValueError,'verification failed'):autonomy.verify_goal(self.root,'test',self.repo,self.sha,evidence,{})
-  self.assertEqual(json.loads((self.root/'data/goal-verification/test.json').read_text())['status'],'failed')
-
- def test_goal_collects_missing_test_from_packet_using_executed_runner(self):
+ def test_planning_evidence_does_not_invent_test_commands(self):
   testdir=self.repo/'tests/integration';testdir.mkdir(parents=True)
   for name in ('old.test.ts','new.test.ts'):(testdir/name).write_text('// synthetic')
   autonomy.git(self.repo,'add','.');autonomy.git(self.repo,'commit','-qm','tests')
@@ -60,6 +47,13 @@ class Continuous(unittest.TestCase):
   (bindings/'one.json').write_text(json.dumps({'lane':'test','packet':{'allowed_paths':['tests/integration/new.test.ts']}}))
   shared={'product_goal':{'id':'goal','status':'active'},'tasks':{'one':{'goal_id':'goal'}}}
   evidence=autonomy.planning_evidence(self.root,'test',self.repo,sha,shared)
-  self.assertIn(runner+['tests/integration/new.test.ts'],evidence['goal_checks'])
+  self.assertNotIn(runner+['tests/integration/new.test.ts'],evidence['goal_checks'])
   # No shell commands or extra files outside the original Packet are inferred.
-  self.assertEqual(len(evidence['goal_checks']),2)
+  self.assertEqual(len(evidence['goal_checks']),1)
+
+ def test_only_current_native_agent_checks_are_forwarded(self):
+  folder=self.root/'data/agent-checks/test';folder.mkdir(parents=True)
+  for name,sha,executor in [('current',self.sha,'native-agent'),('stale','other','native-agent'),('legacy',self.sha,'controller')]:
+   item=folder/name;item.mkdir();(item/'state.json').write_text(json.dumps({'lane':'test','sha':sha,'executor':executor,'state':'validated','argv':['npm','test'],'exit_code':0,'output':'Actual Agent execution'}))
+  rows=autonomy.planning_evidence(self.root,'test',self.repo,self.sha,None)['agent_checks']
+  self.assertEqual(len(rows),1);self.assertIn('/current/',rows[0]['receipt_path']);self.assertEqual(rows[0]['exit_code'],0)

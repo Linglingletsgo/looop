@@ -67,9 +67,10 @@ class DefaultMethods(unittest.TestCase):
   value=research.perform(run,self.repo,self.repo/'run','PM','state',lambda:None,{'harness':'codex','provider':'codex'})
   self.assertEqual(value['sources'][0]['path'],'spec.md');self.assertEqual(len(calls),3);self.assertIn('without line-number suffixes',calls[2][2])
   repaired['sources'][0]['quote']='An invented quotation that is absent from the actual specification.'
-  with patch.object(research,'invoke',side_effect=[plan,repaired,repaired,repaired]) as model:
-   with self.assertRaisesRegex(ValueError,'quotation not found'):research.perform(run,self.repo,self.repo/'bad','PM','state',lambda:None,{'harness':'codex','provider':'codex'})
-  self.assertEqual(model.call_count,4)
+  with patch.object(research,'invoke',side_effect=[plan,repaired]) as model:
+   value=research.perform(run,self.repo,self.repo/'bad','PM','state',lambda:None,{'harness':'codex','provider':'codex'})
+   self.assertEqual(value['evidence_basis']['assessed_by'],'product-manager-agent')
+  self.assertEqual(model.call_count,2)
 
 class GoalPlanning(unittest.TestCase):
  setUp=fixtures.Autonomy.setUp

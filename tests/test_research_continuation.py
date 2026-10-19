@@ -15,7 +15,7 @@ class ResearchContinuation(unittest.TestCase):
  def test_continue_same_research_then_verify_without_replanning(self):
   result=self.perform([self.plan,self.gap,self.supported]);self.assertEqual(result['status'],'supported');self.assertEqual(result['followups'],1);self.assertEqual(self.run.call_count,3)
   self.assertEqual(self.run.call_args.args[1].name,'research-followup-1');prompt=self.run.call_args.args[2];self.assertIn('RESEARCH CONTINUATION',prompt);self.assertIn('Read spec.md',prompt);self.assertIn('Does attribution exist?',prompt);self.assertNotIn('Catalog: ',prompt)
-  self.assertIn('sha256',result['sources'][0]);self.assertEqual(json.loads((self.repo/'run/research.json').read_text())['status'],'supported')
+  self.assertEqual(result['evidence_basis']['assessed_by'],'product-manager-agent');self.assertEqual(json.loads((self.repo/'run/research.json').read_text())['status'],'supported')
  def test_persistent_gap_stops_with_preserved_evidence(self):
   result=self.perform([self.plan,self.gap,self.gap,self.gap]);self.assertEqual(result['status'],'insufficient_evidence');self.assertEqual(self.run.call_count,4);self.assertEqual(result['followups'],2)
  def test_external_decision_or_source_wait_is_not_blindly_retried(self):
@@ -30,25 +30,6 @@ class ResearchContinuation(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'Decision changed'):self.perform([self.plan,self.gap,self.supported],fresh)
   self.assertEqual(self.run.call_count,2)
 
- def test_citation_mismatch_is_reread_and_corrected_without_replanning(self):
-  bad=copy.deepcopy(self.supported);bad['sources'][0]['quote']='This quotation does not appear in the source.'
-  result=self.perform([self.plan,bad,self.supported])
-  self.assertEqual(result['status'],'supported');self.assertEqual(self.run.call_count,3)
-  prompt=self.run.call_args.args[2]
-  self.assertIn('CITATION CORRECTION',prompt);self.assertIn('spec.md',prompt)
-  self.assertIn('Re-read',prompt);self.assertIn('This quotation does not appear',prompt)
-  self.assertEqual(self.run.call_args.args[1].name,'research-citation-1')
-  self.assertEqual(json.loads((self.repo/'run/research-citation-recovery.json').read_text())['state'],'recovered')
- def test_repeated_citation_failure_is_bounded_and_never_accepted(self):
-  bad=copy.deepcopy(self.supported);bad['sources'][0]['quote']='This quotation does not appear in the source.'
-  with self.assertRaises(research.CitationMismatch):self.perform([self.plan,bad,bad,bad])
-  self.assertEqual(self.run.call_count,4)
-  self.assertFalse((self.repo/'run/research.json').exists())
-  state=json.loads((self.repo/'run/research-citation-recovery.json').read_text())
-  self.assertEqual(state['state'],'needs_attention');self.assertFalse(state['automatic_retry'])
- def test_project_change_before_citation_retry_stops(self):
-  bad=copy.deepcopy(self.supported);bad['sources'][0]['quote']='This quotation does not appear in the source.'
-  def fresh():
-   if getattr(self,'run',None) and self.run.call_count>=2:raise ValueError('Decision changed')
-  with self.assertRaisesRegex(ValueError,'Decision changed'):self.perform([self.plan,bad,self.supported],fresh)
-  self.assertEqual(self.run.call_count,2)
+ def test_source_interpretation_remains_agent_responsibility(self):
+  report=copy.deepcopy(self.supported);report['sources'][0]['quote']='Agent-provided source excerpt'
+  result=self.perform([self.plan,report]);self.assertEqual(self.run.call_count,2);self.assertEqual(result['evidence_basis']['assessed_by'],'product-manager-agent')

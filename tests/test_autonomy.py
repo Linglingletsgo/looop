@@ -25,9 +25,9 @@ class Autonomy(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'Duplicate'):autonomy.checked_proposal(self.value,self.mandate,self.repo,self.sha,[key])
   self.value['packet']['allowed_paths']=['spec.py']
   with self.assertRaisesRegex(ValueError,'Outside'):autonomy.checked_proposal(self.value,self.mandate,self.repo,self.sha,[])
- def test_false_source_quote_refused(self):
+ def test_source_interpretation_belongs_to_agents(self):
   self.value['evidence'][0]['quote']='Fabricated source text that is not in the repository'
-  with self.assertRaisesRegex(ValueError,'not found'):autonomy.checked_proposal(self.value,self.mandate,self.repo,self.sha,[])
+  self.assertIsNotNone(autonomy.checked_proposal(self.value,self.mandate,self.repo,self.sha,[]))
  def test_pm_product_binding_cycle_and_no_same_baseline_repeat(self):
   self.setup_tick();calls=[];responses=[json.dumps(self.value),'{"verdict":"approved","findings":[],"reason":"Within authorized existing behavior"}']
   class Board:
@@ -42,9 +42,9 @@ class Autonomy(unittest.TestCase):
    autonomy.tick('test');self.assertEqual(run.call_count,2)
    state=self.root/'data/deliveries/delivery-issue/state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
    autonomy.tick('test');self.assertEqual(run.call_count,2)
- def test_invalid_pm_quote_corrects_before_binding_without_research_repeat(self):
+ def test_invalid_reference_shape_corrects_before_binding_without_research_repeat(self):
   import copy
-  bad=copy.deepcopy(self.value);bad['evidence'][0]['quote']='Fabricated quotation'
+  bad=copy.deepcopy(self.value);bad['evidence'][0]['quote']=None
   self.setup_tick();calls=[];responses=[json.dumps(bad),json.dumps(self.value),'{"verdict":"approved","findings":[],"reason":"Within authorized existing behavior"}']
   class Board:
    def api(self,method,path,data=None):
