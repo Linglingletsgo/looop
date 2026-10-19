@@ -21,13 +21,10 @@ def planning_state(shared,loop):
  intents={k:{n:v[n] for n in ('id','kind','status','title','body','target_task','supersedes') if n in v} for k,v in shared['intents'].items() if (v['status']=='ready' and v['kind']=='decision') or (v['status']=='waiting_decision' and v['kind']=='change')}
  return {'planning_revision':shared['planning_revision'],'intents':intents,'execution_control':{k:loop[k] for k in ('mode','selection_mode') if k in loop}}
 
-RESEARCH_RECHECK_SECONDS=15*60
-
 def recheck_at(previous,mode):
  if mode!='continuous' or previous.get('state')=='queued':return None
- # Old receipts predate evidence-aware planning and may be re-evaluated once.
- if previous.get('planning_protocol')!=3:return 0
- return previous.get('finished_at',previous.get('started_at',0))+RESEARCH_RECHECK_SECONDS
+ return 0
+
 
 def planning_evidence(root,lane,repo,sha,shared):
  root=pathlib.Path(root);result={'baseline_sha':sha,'deliveries':[]};goal_test_paths=set()
@@ -217,11 +214,6 @@ def tick(lane):
     retry_at=recheck_at(previous,mode['mode'])
     if retry_at is None:
      save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'idle','reason':'Already planned this verified baseline; no repeated model calls','sha':sha});finish_without_attempt(ROOT,lane,'该版本与需求状态已完成选题；不重复调用模型。');return
-    if retry_at>time.time():
-     reason='持续运行：本轮未选出合适任务，下一轮自动调研时间 '+datetime.datetime.fromtimestamp(retry_at,datetime.timezone.utc).isoformat()
-     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting','reason':reason,'next_research_at':retry_at,'sha':sha})
-     if store:store.selection(lane,'waiting',reason)
-     return
    if previous.get('fingerprint'):history.append(previous['fingerprint'])
   policy=json.loads((ROOT/'data/delivery-policies'/(lane+'.json')).read_text())
   if policy.get('scope_mode')!='task_paths' and not set(mandate.get('allowed_paths',[]))<=set(policy['allowed_paths']):raise ValueError('Mandate exceeds configured delivery scope')
@@ -237,7 +229,7 @@ def tick(lane):
    save(folder/'state.json',receipt)
    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'discovering','reason':'持续循环：PM 正在核验当前目标并选择下一步。' if mode['mode']=='continuous' else 'PM 正在规划本次目标。','attempt':job,'at':time.time()})
    try:
-    task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / '+('Backlog 选题' if mode['selection_mode']=='backlog_only' else 'Backlog 与需求调研'),'status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；没有价值则休眠，不为消耗token造任务。'})
+    task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / '+('Backlog 选题' if mode['selection_mode']=='backlog_only' else 'Backlog 与需求调研'),'status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；本轮无任务则持续模式立即重新选题，不虚构需求。'})
    except Exception as exc:
     receipt.update(state='blocked',error='PM issue creation outcome needs reconciliation: '+str(exc));save(folder/'state.json',receipt)
     if store:store.selection(lane,'blocked',receipt['error'])
@@ -333,7 +325,7 @@ def tick(lane):
      if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
      store.finish_goal(lane,current_goal['id'],reason,evidence,revision)
      receipt.update(state='no_work',goal_completed=True,finished_at=time.time(),reason='产品目标已完成：'+reason);save(folder/'state.json',receipt)
-     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
+     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return 'continue'
     if value.get('action')=='task' and isinstance(value.get('value_assessment'),dict) and value['value_assessment'].get('material') is False:
      value={'action':'no_work','reason':value.get('reason') or value['value_assessment'].get('why_now') or '范围内没有有证据支持的实质进展。'}
     if value.get('action')=='task':
@@ -347,7 +339,7 @@ def tick(lane):
       elif selected:store.defer_intent(lane,selected_id,value['reason'],revision)
      receipt['state']='no_work';receipt['finished_at']=time.time();receipt['reason']=value['reason'];save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',value['reason'])
-     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'本轮未选出范围内任务；持续模式会自动再次调研。'+value['reason']});return
+     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'本轮未选出范围内任务；持续模式立即进入下一轮调研。'+value['reason']});return 'continue'
     packet,key=checked;validate(packet,policy)
     intent_ids=value.get('intent_ids',[])
     if not isinstance(intent_ids,list) or len(intent_ids)!=len(set(intent_ids)):raise ValueError('Invalid source intent_ids')
@@ -366,7 +358,7 @@ def tick(lane):
      if verdict.get('verdict')!='approved':
       receipt['state']='rejected' if verdict.get('verdict')=='rejected' else 'blocked';receipt['reason']=verdict.get('reason');save(folder/'state.json',receipt)
       if store and receipt['state']=='blocked':store.selection(lane,'blocked',receipt.get('reason') or 'Product 范围审核受阻')
-      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'Product范围审核：'+json.dumps(verdict,ensure_ascii=False)} if receipt['state']=='rejected' else blocked_patch(receipt.get('reason') or 'Product 范围审核受阻'));return
+      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'Product范围审核：'+json.dumps(verdict,ensure_ascii=False)} if receipt['state']=='rejected' else blocked_patch(receipt.get('reason') or 'Product 范围审核受阻'));return 'continue' if receipt['state']=='rejected' else None
     if mandate.get('task_kind')=='test_only':packet['requirements'].append('只增加有价值的合成回归，保留全部既有断言；如暴露生产缺陷，保留失败证据并停止，不改生产代码或削弱断言。')
     validate(packet,policy);save(folder/'packet.json',packet)
     # Persist approved scope provenance before exposing a bound task. No shell/model-supplied commands.
@@ -395,9 +387,13 @@ def tick(lane):
      receipt['board_sync_error']=str(sync_exc)[:2000];save(folder/'state.json',receipt)
     raise
 
+def run_loop(lane):
+ from loop_control import settle,view
+ while True:
+  try:outcome=tick(lane)
+  finally:settle(ROOT,lane)
+  if outcome!='continue' or view(ROOT,lane)['mode']!='continuous':return
+
 if __name__=='__main__':
  import sys
- try:tick(sys.argv[1])
- finally:
-  from loop_control import settle
-  settle(ROOT,sys.argv[1])
+ run_loop(sys.argv[1])
