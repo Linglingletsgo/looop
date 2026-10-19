@@ -4,7 +4,7 @@ looop 负责队列、并发、启动原生 Harness、结果文件结构与身份
 
 项目已有角色和流程优先。PM 调研并提出目标和任务；Builder 实现；项目定义的验证角色或默认 QA 使用原生 Harness 运行检查并保存证据；Reviewer 独立审查；PM 根据当前代码和执行证据判断目标是否完成。没有配置的 Acceptance 不自动加入。
 
-运行 Harness 和 Token Plan 沿用设置页。Magpie / ChatGPT 使用本机 Codex 已配置的 3425 网关和 `codex/` 模型；Magpie / WorkBuddy DeepSeek 固定 `workbuddy/deepseek-v4.1-flash`。凭据只从本机配置读取，不复制到仓库。Claude Code 通过 Magpie 的 Messages 接口直接使用所选模型；不依赖旧 CPA 协议桥，也不自动跨提供商回退。验证使用 review 路由。项目依赖临时接入源码快照，不在快照中重新安装。真实数据库、邮件、外部模型和生产数据仍遵守项目原有边界；隔离测试库按项目说明使用。无新增任务总时限。
+运行 Harness 和 Token Plan 沿用设置页。Magpie / ChatGPT 使用本机 Codex 已配置的 3425 网关和 `codex/` 模型；Magpie / WorkBuddy DeepSeek 固定 `workbuddy/deepseek-v4.1-flash`。Magpie / Command Code 固定 `commandcode/deepseek/deepseek-v4.1-flash`。凭据只从本机配置读取，不复制到仓库。Claude Code 通过 Magpie 的 Messages 接口直接使用所选模型；不依赖旧 CPA 协议桥，也不自动跨提供商回退。验证使用 review 路由。项目依赖临时接入源码快照，不在快照中重新安装。真实数据库、邮件、外部模型和生产数据仍遵守项目原有边界；隔离测试库按项目说明使用。无新增任务总时限。
 
 所有角色通过文件工具更新本次运行的 handoff.json.result，保留 version、run_id、nonce。自然语言对话不参与状态解析。结果的结论由 Agent 负责；字段缺失触发有界纠正，不得为了格式虚报成功。源码变化、并发外部工作和目标版本冲突仍须重新判断。
 

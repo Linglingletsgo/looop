@@ -5,6 +5,8 @@ from sandbox import HARNESS_IDS,COMPATIBILITY,claude_subscription
 from project_state import Conflict
 from magpie_provider import PLANS as MAGPIE_PLANS,configured as magpie_configured
 
+PLAN_LABELS={'codex':'Codex / 本机配置','commandcode':'Command Code / 直连（旧）','claude_subscription':'Claude Code 订阅','magpie_chatgpt':'Magpie / ChatGPT','magpie_deepseek':'Magpie / WorkBuddy DeepSeek','magpie_commandcode':'Magpie / Command Code DeepSeek'}
+
 STAGES=('planning','build','review','acceptance','advisory')
 DEFAULTS={'planning':'codex','build':'commandcode','review':'codex','acceptance':'codex','advisory':'codex'}
 
@@ -17,7 +19,7 @@ def public(root=ROOT):
  try:model=tomllib.loads((pathlib.Path.home()/'.codex/config.toml').read_text()).get('model')
  except (OSError,ValueError):pass
  value={k:v for k,v in value.items() if k in ('revision','harness','routes','codex_model','stage_harnesses')}
- return {**value,'inherited_codex_model':model,'compatibility':COMPATIBILITY,'harnesses':[{'id':n,'available':bool(shutil.which(n)),'installed':bool(shutil.which(n))} for n in HARNESS_IDS],'plans':[{'id':'codex','configured':(pathlib.Path.home()/'.codex/config.toml').is_file()},{'id':'commandcode','configured':(pathlib.Path(root)/'secrets/commandcode.key').is_file(),'model':'deepseek/deepseek-v4.1-flash'},{'id':'claude_subscription','configured':claude_subscription()},*({'id':plan,'configured':magpie_configured()} for plan in MAGPIE_PLANS)]}
+ return {**value,'inherited_codex_model':model,'compatibility':COMPATIBILITY,'harnesses':[{'id':n,'available':bool(shutil.which(n)),'installed':bool(shutil.which(n))} for n in HARNESS_IDS],'plan_labels':PLAN_LABELS,'plans':[{'id':'codex','configured':(pathlib.Path.home()/'.codex/config.toml').is_file()},{'id':'commandcode','configured':(pathlib.Path(root)/'secrets/commandcode.key').is_file(),'model':'deepseek/deepseek-v4.1-flash'},{'id':'claude_subscription','configured':claude_subscription()},*({'id':plan,'configured':magpie_configured()} for plan in MAGPIE_PLANS)]}
 
 def save(root,value,expected,request_id):
  if value.get('harness') not in HARNESS_IDS:raise ValueError('请选择 Codex、Claude Code 或 OMP。')
