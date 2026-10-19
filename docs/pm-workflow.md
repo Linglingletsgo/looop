@@ -24,4 +24,6 @@ looop 负责队列、并发、启动原生 Harness、结果文件结构与身份
 
 ## Magpie 子代理资源库
 
-在 Linux 的 looop 目录运行 `python3 bin/sync-magpie-subagents.py`，将 `default-roles/` 的 8 个默认角色更新到 Magpie 原生资源库，并由 Magpie 分发到其支持的 Codex 和 Claude Code。条目统一加 `looop-` 前缀，项目角色优先，角色可用不等于自动加入执行流程。保留已有模型、账号及其它原生角色；OMP 当前不在 Magpie 支持的子代理分发目标内。修改前备份到 `data/backups/`，同步后回读核对；不将提示词塞进共享全局指令。
+在 Linux 的 looop 目录运行 `python3 bin/sync-magpie-subagents.py`，将 `default-roles/` 的 8 个默认角色更新到 Magpie 原生资源库，并由 Magpie 分发到其支持的 Codex 和 Claude Code。条目使用通用角色名（如 `product-manager`、`builder`、`reviewer`），提示词直接采用角色职责，不添加调度器身份包装。项目角色优先，角色可用不等于自动加入执行流程。保留已有模型、账号及其它原生角色；OMP 当前不在 Magpie 支持的子代理分发目标内。修改前备份到 `data/backups/`，同步后回读核对；不将提示词塞进共享全局指令。
+
+Product Manager 关联 6 个通用 skills：`pm-investigation`、`pm-competitive-research`、`pm-opportunities`、`pm-backlog-prioritization`、`pm-requirement-brief` 和 `pm-assumption-testing`。优先使用项目规定的方法，其余按当前决策选用，不要求每次全部执行。同步脚本从已审核的 `pm-skills/` 生成中性名称的独立导出，保留上游署名和许可证，不修改调度器校验的源文件。Claude Code 原生绑定角色 skills；Codex 安装相同 skills，由角色指令引用（其子代理格式没有 skills 绑定字段）。旧前缀条目迁移为同名通用条目，同名原生配置替换前完整备份。
