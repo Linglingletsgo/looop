@@ -14,7 +14,7 @@ class ResearchContinuation(unittest.TestCase):
   return research.perform(self.run,self.repo,self.repo/'run','PM','Current state',self.fresh,{'harness':'codex','provider':'codex'})
  def test_continue_same_research_then_verify_without_replanning(self):
   result=self.perform([self.plan,self.gap,self.supported]);self.assertEqual(result['status'],'supported');self.assertEqual(result['followups'],1);self.assertEqual(self.run.call_count,3)
-  self.assertEqual(self.run.call_args.args[1].name,'research-followup-1');prompt=self.run.call_args.args[2];self.assertIn('RESEARCH CONTINUATION',prompt);self.assertIn('Read spec.md',prompt);self.assertIn('Does attribution exist?',prompt);self.assertNotIn('Catalog: ',prompt)
+  self.assertEqual(self.run.call_args.args[1].name,'research-followup-1');prompt=self.run.call_args.args[2];self.assertIn('RESEARCH CONTINUATION',prompt);self.assertIn('Read spec.md',prompt);self.assertIn('Does attribution exist?',prompt);self.assertNotIn('Catalog: ',prompt);self.assertIn('offline restrictions below apply ONLY to synthetic experiments',prompt);self.assertIn('retrieve public pages read-only',prompt)
   self.assertEqual(result['evidence_basis']['assessed_by'],'product-manager-agent');self.assertEqual(json.loads((self.repo/'run/research.json').read_text())['status'],'supported')
  def test_persistent_gap_stops_with_preserved_evidence(self):
   result=self.perform([self.plan,self.gap,self.gap,self.gap]);self.assertEqual(result['status'],'insufficient_evidence');self.assertEqual(self.run.call_count,4);self.assertEqual(result['followups'],2)

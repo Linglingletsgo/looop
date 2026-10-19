@@ -110,11 +110,24 @@ class GoalPlanning(unittest.TestCase):
   self.assertEqual(store.read('test')['product_goal']['status'],'completed');self.assertEqual(store.read('test')['product_goal']['completed_slices'],2)
   self.assertEqual(loop_control.settle(self.root,'test')['mode'],'paused')
  def test_insufficient_research_never_dispatches_or_calls_proposal(self):
-  store=self.configure();self.research_mock.return_value={'status':'insufficient_evidence','recommendation':'Need actual evidence'}
+  store=self.configure();self.research_mock.return_value={'status':'insufficient_evidence','recommendation':'Need actual evidence','next_step':{'kind':'human_decision','detail':'Choose a concrete product policy'}}
   with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
    with self.assertRaises(autonomy.ResearchIncomplete):autonomy.tick('test')
    model.assert_not_called()
   self.assertFalse(store.read('test')['tasks']);self.assertEqual(store.read('test')['selection']['phase'],'blocked');self.assertEqual(next(json.loads(p.read_text()) for p in (self.root/'data/autonomy/test').glob('*/state.json'))['failure']['category'],'research_incomplete');self.assertEqual(store.read('test')['research']['status'],'insufficient_evidence');self.assertEqual(loop_control.settle(self.root,'test')['mode'],'paused')
+ def check_automatic_research_gap(self,kind):
+  store=self.configure();doc=store.read('test')
+  with patch('bridge.validate_profile',return_value={'repository_revision':self.sha}):loop_control.switch(self.root,'test','continuous',doc['revision'],'continuous-'+kind)
+  self.research_mock.return_value={'status':'insufficient_evidence','recommendation':'Public sample does not support this candidate','next_step':{'kind':kind,'detail':'Check public samples or choose another opportunity'}}
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
+   autonomy.tick('test');model.assert_not_called()
+  self.assertFalse(store.read('test')['tasks']);self.assertEqual(store.read('test')['selection']['phase'],'no_work')
+  from planning_intervention import unresolved
+  self.assertFalse(unresolved(self.root,'test'));self.assertEqual(loop_control.view(self.root,'test')['mode'],'continuous')
+  receipts=[json.loads(p.read_text()) for p in (self.root/'data/autonomy/test').glob('*/state.json')]
+  self.assertTrue(all(v['state']=='no_work' for v in receipts));self.assertIsNotNone(autonomy.recheck_at(receipts[-1],'continuous'))
+ def test_evidence_gap_waits_without_human_retry(self):self.check_automatic_research_gap('investigate')
+ def test_source_wait_rechecks_without_human_retry(self):self.check_automatic_research_gap('wait_source')
  def test_decision_changed_during_research_prevents_dispatch(self):
   store=self.configure()
   def research_result(*a,**kw):
