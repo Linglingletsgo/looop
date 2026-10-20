@@ -22,7 +22,7 @@ def validate(packet,policy):
  if not isinstance(packet['allowed_paths'],list) or not all(isinstance(x,str) for x in packet['allowed_paths']):raise GateError('Write scope must be a list of files')
  if policy.get('max_rounds') is not None and (type(policy['max_rounds']) is not int or policy['max_rounds']<1):raise GateError('Invalid round limit')
  if not policy.get('checks'):raise GateError('Explicit checks required')
- if any(s.get('provider','codex') not in ('codex','commandcode','claude_subscription','magpie_chatgpt','magpie_deepseek','magpie_commandcode') for s in policy.get('workflow',[])):raise GateError('Unapproved provider')
+ if any(s.get('provider','codex') not in ('codex','commandcode','claude_subscription','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool') for s in policy.get('workflow',[])):raise GateError('Unapproved provider')
  for argv in policy['checks']:
   if not isinstance(argv,list) or not argv or not all(isinstance(x,str) and x for x in argv):raise GateError('Unsupported check executable')
  if not 1<=len(packet['allowed_paths'])<=20:raise GateError('Invalid write scope')

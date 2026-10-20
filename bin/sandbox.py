@@ -4,7 +4,7 @@ from runtime import ROOT
 from provider_state import pause_from_events,paused
 
 HARNESS_IDS=('codex','claude','omp')
-COMPATIBILITY={'codex':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode'),'omp':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode'),'claude':('claude_subscription','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode')}
+COMPATIBILITY={'codex':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'omp':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'claude':('claude_subscription','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool')}
 FLASH='deepseek/deepseek-v4.1-flash'
 
 def execution_environment():
@@ -67,7 +67,7 @@ def invocation(workspace,scratch,execution_route):
   cmd=['claude','-p','--output-format','json','--no-session-persistence','--dangerously-skip-permissions','--permission-prompts','none']
   if model:cmd+=['--model',model]
   return cmd,env,model
- if provider in ('magpie_chatgpt','magpie_deepseek','magpie_commandcode'):
+ if provider in ('magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'):
   from magpie_provider import selected
   base,token,model=selected(provider,execution_route.get('model'))
  elif provider=='codex':

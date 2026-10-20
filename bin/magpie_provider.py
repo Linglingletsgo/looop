@@ -1,7 +1,7 @@
 """Selected subscription routes through the user's existing local Magpie gateway."""
 import os,pathlib,tomllib,urllib.parse
 
-PLANS=('magpie_chatgpt','magpie_deepseek','magpie_commandcode')
+PLANS=('magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool')
 DEEPSEEK='workbuddy/deepseek-v4.1-flash'
 
 def connection(config_path=None):
@@ -21,6 +21,7 @@ def selected(provider,model=None):
  base,token,inherited=connection()
  if provider=='magpie_commandcode':model='commandcode/deepseek/deepseek-v4.1-flash'
  elif provider=='magpie_deepseek':model=DEEPSEEK
+ elif provider=='magpie_flash_pool':model='group/auto-deepseek-v4-1-flash'
  elif provider=='magpie_chatgpt':
   model=model or inherited
   if model.startswith('codex/'):model=model[len('codex/'):]

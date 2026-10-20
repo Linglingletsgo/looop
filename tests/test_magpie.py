@@ -17,6 +17,7 @@ class Magpie(unittest.TestCase):
    self.assertEqual(magpie.selected('magpie_chatgpt')[2],'codex/gpt-test')
    self.assertEqual(magpie.selected('magpie_deepseek','other')[2],'workbuddy/deepseek-v4.1-flash')
    self.assertEqual(magpie.selected('magpie_commandcode','other')[2],'commandcode/deepseek/deepseek-v4.1-flash')
+   self.assertEqual(magpie.selected('magpie_flash_pool','other')[2],'group/auto-deepseek-v4-1-flash')
    with self.assertRaises(ValueError):magpie.selected('magpie_chatgpt','workbuddy/auto')
  def test_all_native_harnesses_use_selected_gateway_without_keys_in_argv(self):
   with tempfile.TemporaryDirectory() as d,patch.object(sandbox.shutil,'which',return_value='/cli'),patch.object(magpie,'connection',return_value=('http://127.0.0.1:3425/v1','private-fixture','gpt-test')):
@@ -35,3 +36,17 @@ class Magpie(unittest.TestCase):
    self.assertTrue(all(p['id'] in public['plan_labels'] for p in public['plans']));self.assertTrue(all(p['configured'] for p in public['plans'] if p['id'] in magpie.PLANS));self.assertEqual(settings.route(settings.read(d),'planning')['model'],'gpt-test');self.assertEqual(settings.route(settings.read(d),'build')['provider'],'magpie_deepseek')
    with patch.object(settings,'magpie_configured',return_value=False):
     with self.assertRaises(ValueError):settings.save(d,command,1,'missing')
+
+ def test_shared_pool_setting_is_explicit_and_not_blocked_by_member_cooldown(self):
+  from provider_state import pause
+  from autonomy import slots
+  with tempfile.TemporaryDirectory() as d,patch.object(settings,'magpie_configured',return_value=True):
+   root=pathlib.Path(d)
+   value={'harness':'claude','routes':{s:'magpie_flash_pool' for s in settings.STAGES},'stage_harnesses':{},'codex_model':None}
+   settings.save(root,value,0,'shared-pool')
+   pause(root,'magpie_deepseek',429,'3600')
+   self.assertIsNone(slots(root,'demo',{}))
+   self.assertEqual(settings.route(settings.read(root),'planning')['provider'],'magpie_flash_pool')
+   public=settings.public(root)
+   self.assertIn('magpie_flash_pool',public['compatibility']['claude'])
+   self.assertIn('magpie_flash_pool',public['plan_labels'])

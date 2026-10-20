@@ -5,7 +5,7 @@ from sandbox import HARNESS_IDS,COMPATIBILITY,claude_subscription
 from project_state import Conflict
 from magpie_provider import PLANS as MAGPIE_PLANS,configured as magpie_configured
 
-PLAN_LABELS={'codex':'Codex / 本机配置','commandcode':'Command Code / 直连（旧）','claude_subscription':'Claude Code 订阅','magpie_chatgpt':'Magpie / ChatGPT','magpie_deepseek':'Magpie / WorkBuddy DeepSeek','magpie_commandcode':'Magpie / Command Code DeepSeek'}
+PLAN_LABELS={'codex':'Codex / 本机配置','commandcode':'Command Code / 直连（旧）','claude_subscription':'Claude Code 订阅','magpie_chatgpt':'Magpie / ChatGPT','magpie_deepseek':'Magpie / WorkBuddy DeepSeek','magpie_commandcode':'Magpie / Command Code DeepSeek','magpie_flash_pool':'Magpie / DeepSeek Flash 共享池'}
 
 STAGES=('planning','build','review','acceptance','advisory')
 DEFAULTS={'planning':'codex','build':'commandcode','review':'codex','acceptance':'codex','advisory':'codex'}
