@@ -2,7 +2,8 @@ import copy,json,pathlib,sys,tempfile,unittest
 from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 from project_state import Store,Conflict,Held
-from product_goals import proposal,summary
+from product_goals import proposal,summary,completion_coverage
+from source_evidence import verify_completion
 import product_research as research
 import loop_control
 
@@ -43,6 +44,35 @@ class Goals(unittest.TestCase):
   self.s.external_work('demo',{'action':'start','id':'manual','summary':'正在核对比较页面'},self.s.read('demo')['revision'],'manual','cli')
   self.assertEqual(Store(self.root).context('demo')['product_goal']['progress'],'正在核对比较页面')
   self.assertEqual(Store(self.root).context('demo')['product_goal']['progress_verification'],'self_reported')
+
+ def experience_goal(self):
+  return {**GOAL,'experience':{'journey':'描述需求、比较候选、打开投稿入口','before':'难以判断下一步','after':'无需说明即可选择候选并行动','criterion':GOAL['success_criteria'][1]}}
+ def test_experience_contract_is_visible_and_immutable_across_slices(self):
+  goal=self.experience_goal();self.s.bind('demo','one',{},provenance={'product_goal':goal})
+  current=self.s.read('demo')['product_goal']
+  self.assertEqual(summary({'product_goal':current})['experience'],goal['experience'])
+  self.assertEqual(proposal(GOAL,current)['experience'],goal['experience'])
+  with self.assertRaisesRegex(ValueError,'cannot change'):proposal({**goal,'experience':{**goal['experience'],'after':'Different outcome'}},current)
+  with self.assertRaisesRegex(ValueError,'cannot change'):proposal(goal,{**current,'experience':None})
+  with self.assertRaisesRegex(ValueError,'exact success criterion'):proposal({**goal,'experience':{**goal['experience'],'criterion':'Invented'}})
+ def test_experience_completion_rejects_only_code_counts_stale_or_invented_proof(self):
+  goal=self.experience_goal();repo=self.root/'repo';repo.mkdir();(repo/'proof.md').write_text('Source implementation')
+  artifacts=self.root/'run';artifacts.mkdir();(artifacts/'walkthrough.txt').write_text('Agent exercised comparison and opened the selected entry; loading and recovery checked. No real user study.')
+  evidence=[{'criterion':v,'path':'proof.md','quote':'Source implementation'} for v in goal['success_criteria']]
+  with self.assertRaisesRegex(ValueError,'walkthrough'):completion_coverage(evidence,goal['success_criteria'],goal['experience'])
+  evidence[1].update(kind='agent_walkthrough',path='walkthrough.txt',quote='Agent exercised comparison and opened the selected entry',target_sha='a'*40)
+  verify_completion(repo,artifacts,goal,evidence,'a'*40)
+  with self.assertRaisesRegex(ValueError,'another revision'):verify_completion(repo,artifacts,goal,evidence,'b'*40)
+  evidence[1]['quote']='Users loved the experience'
+  with self.assertRaisesRegex(ValueError,'not found'):verify_completion(repo,artifacts,goal,evidence,'a'*40)
+  evidence[1]['path']='../repo/proof.md'
+  with self.assertRaises(ValueError):verify_completion(repo,artifacts,goal,evidence,'a'*40)
+ def test_legacy_goal_needs_no_experience_and_manual_finish_cannot_skip_it(self):
+  legacy=proposal(GOAL);self.assertNotIn('experience',legacy)
+  self.s.bind('demo','one',{},provenance={'product_goal':self.experience_goal()});self.s.transition('demo','one','completed',import_existing=True)
+  goal=self.s.read('demo')['product_goal']
+  with self.assertRaisesRegex(ValueError,'walkthrough'):self.s.finish_goal('demo',goal['id'],'Merged and tests passed',[{'criterion':v,'path':'proof'} for v in goal['success_criteria']],0)
+  self.assertEqual(self.s.read('demo')['product_goal']['status'],'active')
 
 class Research(unittest.TestCase):
  def setUp(self):self.tmp=tempfile.TemporaryDirectory();self.repo=pathlib.Path(self.tmp.name);(self.repo/'spec.md').write_text('Current users cannot compare dated opportunities with reliable source attribution.')

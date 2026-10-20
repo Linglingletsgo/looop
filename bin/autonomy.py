@@ -11,7 +11,8 @@ from provider_state import paused
 from planning_runtime import invoke
 from process_owner import identity
 from planning_intervention import unresolved,blocked_patch
-from product_goals import completion_coverage
+from product_goals import EXPERIENCE_INSTRUCTIONS
+from source_evidence import verify_completion
 from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS,summary as goal_summary
 from product_research import perform as research,brief as research_brief,ResearchIncomplete
 from task_selection import backlog_sources,backlog_items,check_source,instructions
@@ -279,7 +280,9 @@ def tick(lane):
     evidence['verification_owner']='agent'
     context+='\nController-verified execution evidence: '+json.dumps(evidence,ensure_ascii=False)+'\nPM snapshots need not contain node_modules or database access. Read prior agent receipts as execution evidence. You have linked project dependencies and native tools: run missing required checks yourself against this snapshot, using the documented isolated test environment; write bounded evidence artifacts beside handoff.json. Do not repeatedly return no_work for a test you can run within current authority. Earlier-SHA receipts prove only their recorded checks; inspect source changes before applying them to this baseline. Missing required current-SHA checks are explicit validation gaps, not evidence of product completion. Complete the active goal when every criterion has source and relevant execution proof, then the controller selects another goal. In continuous mode no_work ends only this investigation; research resumes automatically. Never manufacture tasks to keep busy.\n'
     goal=('This is a test-only scheduler validation scope, not authorization for product implementation. Only propose a coherent regression slice supporting a concrete user outcome; if that outcome cannot be advanced meaningfully within this scope, return no_work.' if mandate.get('task_kind')=='test_only' else 'Advance one meaningful product outcome within the current project envelope. The requirement may be large; the Packet is its next coherent development slice, not a new unrelated requirement.')
-    prompt=context+GOAL_INSTRUCTIONS+'\n'+VALUE_INSTRUCTIONS+'\n'+goal+' Write handoff.json result {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value_assessment":{"material":true,"problem":"observed problem or evidenced risk","observable_gain":"verifiable improvement","why_now":"why this slice matters now"},"value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome"},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. For goal_complete include at least one exact source proof for each existing success criterion; multiple proofs per criterion are allowed. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
+    context+='\n'+EXPERIENCE_INSTRUCTIONS+'\n'
+    context+='\nExperience proof artifact root (relative proof paths resolve here): '+str(folder/'pm')+'\n'
+    prompt=context+GOAL_INSTRUCTIONS+'\n'+VALUE_INSTRUCTIONS+'\n'+goal+' Write handoff.json result {"action":"task|no_work|goal_complete","goal_id":"existing goal id for completion","completion_evidence":[{"criterion":"exact success criterion","path":"repo/file","quote":"exact supporting source"}],"backlog_item":{"path":"...","quote":"..."},"intent_ids":["intent-id"],"reason":"...","value_assessment":{"material":true,"problem":"observed problem or evidenced risk","observable_gain":"verifiable improvement","why_now":"why this slice matters now"},"value":"specific user benefit and slice contribution","evidence":[{"path":"...","quote":"exact existing source text"}],"product_goal":{"title":"plain user-facing outcome","user_value":"what improves for the user","success_criteria":["observable outcome"],"remaining":["outcomes still to implement after this slice"],"progress":"verified current progress","slice_value":"how this slice advances the outcome","experience":{"journey":"consumer journey; omit experience for non-experience or legacy active goals","before":"observed friction","after":"observable improvement","criterion":"exact experience success criterion"}},"packet":{"title":"...","requirements":["..."],"acceptance":["..."],"allowed_paths":["..."]}}. For goal_complete include at least one exact source proof for each existing success criterion; multiple proofs per criterion are allowed. Keep at least one remaining outcome until the PM has explicitly verified whole-goal completion.'
     def fresh():
      if store:
       store.project_guard(lane)
@@ -301,9 +304,7 @@ def tick(lane):
      validate_value(value)
      if value.get('action')=='goal_complete':
       if not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
-      completion_coverage(value.get('completion_evidence'),current_goal['success_criteria'])
-      from project_adapter import safe_file
-      for e in value['completion_evidence']:safe_file(workspace,e.get('path'))
+      verify_completion(workspace,folder/'pm',current_goal,value.get('completion_evidence'),sha)
       reason=value.get('reason')
       if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
      else:
@@ -317,10 +318,7 @@ def tick(lane):
     if value.get('action')=='goal_complete':
      if not store or not current_goal or value.get('goal_id')!=current_goal['id']:raise ValueError('Goal completion requires the current active goal')
      evidence=value.get('completion_evidence',[])
-     completion_coverage(evidence,current_goal['success_criteria'])
-     from project_adapter import safe_file
-     for e in evidence:
-      safe_file(workspace,e.get('path'))
+     verify_completion(workspace,folder/'pm',current_goal,evidence,sha)
      reason=value.get('reason')
      if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
      store.finish_goal(lane,current_goal['id'],reason,evidence,revision)

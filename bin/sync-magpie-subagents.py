@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Publish looop default roles into Magpie's native subagent library."""
 import datetime,http.cookiejar,json,pathlib,re,shutil,subprocess,urllib.parse,urllib.request
+from product_goals import EXPERIENCE_INSTRUCTIONS
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 DESCRIPTIONS={
@@ -71,6 +72,8 @@ def main():
   prompt=path.read_text().strip()
   skills=old.get('skills',[])
   if name=='product-manager':
+   prompt=prompt.replace('Define a small, complete Packet','Define a coherent, complete Packet')
+   prompt+='\n\n'+EXPERIENCE_INSTRUCTIONS
    skills=list(dict.fromkeys([*skills,*skill_names]))
    prompt+='\n\nUse project-required research methods first; otherwise consult pm-investigation and the relevant installed PM skills: '+', '.join(n for n in skill_names if n!='pm-investigation')+'. Choose methods that inform the decision; do not run every method mechanically.'
   item={'name':name,'description':DESCRIPTIONS[name],'prompt':prompt,'skills':skills,'mcp':old.get('mcp',[]),'agents':list(dict.fromkeys([*old.get('agents',[]),*agents]))}

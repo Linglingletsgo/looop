@@ -33,3 +33,5 @@ looop 负责队列、并发、启动原生 Harness、结果文件结构与身份
 Product Manager 关联 6 个通用 skills：`pm-investigation`、`pm-competitive-research`、`pm-opportunities`、`pm-backlog-prioritization`、`pm-requirement-brief` 和 `pm-assumption-testing`。优先使用项目规定的方法，其余按当前决策选用，不要求每次全部执行。同步脚本从已审核的 `pm-skills/` 生成中性名称的独立导出，保留上游署名和许可证，不修改调度器校验的源文件。Claude Code 原生绑定角色 skills；Codex 安装相同 skills，由角色指令引用（其子代理格式没有 skills 绑定字段）。旧前缀条目迁移为同名通用条目，同名原生配置替换前完整备份。
 
 独立对话与调度执行的结构化交接、默认精简 context、历史读取和资源收尾边界见 [项目状态协议](project-state-protocol.md)。角色结果是阶段证据，不是第二份当前状态；独立会话结束不替代审核、验收、合并或资源收尾。
+
+消费级产品的新目标按完整用户旅程选题，保留精简的前后体验契约；关闭时要求当前版本的实际运行走查证据，代理走查与真实用户测试分开标注。UX/UI 仍为按需角色，现有目标不追改。详见 [消费级体验目标](consumer-experience-goals.md)。

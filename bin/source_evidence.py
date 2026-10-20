@@ -12,3 +12,15 @@ def quote(repo,name,value):
  if len(value)>2000:raise SourceEvidenceError('Source quotation exceeds 2000 characters: '+name)
  if value not in path.read_text():raise SourceEvidenceError('Source quote not found: '+name)
  return value
+
+
+def verify_completion(repo,artifacts,goal,evidence,target):
+ """Verify proof identity and exact artifact quotations, never judge usability."""
+ from product_goals import completion_coverage
+ completion_coverage(evidence,goal['success_criteria'],goal.get('experience'))
+ for e in evidence:
+  if e.get('kind') in ('agent_walkthrough','user_test'):
+   if e.get('target_sha')!=target:raise ValueError('Experience proof targets another revision')
+   quote(artifacts,e.get('path'),e.get('quote'))
+  else:safe_file(repo,e.get('path'))
+ return evidence

@@ -57,3 +57,5 @@ The shared project state contains one `product_goal` (value, criteria, remaining
 Open the project card to inspect the goal and **PM 调研**; task **证据** includes selected methods, versions and source quotations. The default pack includes CC BY-NC-SA 4.0 adaptations for personal noncommercial use alongside MIT methods; preserve their licenses. See [research selection](docs/pm-skills-research.md).
 
 Claude Code 接入 Command Code DeepSeek Flash：参见 [配置与使用](docs/commandcode-claude.md)。
+
+Consumer product planning prioritizes complete user journeys and observable before/after improvements. New experience goals retain a compact journey contract and require current-version running-product evidence at completion, labelled as agent walkthrough or actual user testing. Existing goals and non-interactive projects remain compatible; UX/UI is optional. See [consumer experience goals](docs/consumer-experience-goals.md).
