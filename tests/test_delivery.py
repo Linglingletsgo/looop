@@ -363,3 +363,60 @@ class Delivery(unittest.TestCase):
  def test_navigation_rejects_unrelated_previous_sha(self):
   with self.assertRaises(subprocess.CalledProcessError):
    delivery.review_navigation(self.repo,self.packet['baseline_sha'],self.packet['baseline_sha'],{'target_sha':'f'*40,'run_id':'other','verdict':'approved'},self.root)
+
+ def test_long_stage_summaries_keep_full_results_and_do_not_block(self):
+  summary='详细实现与验证说明。'*400
+  def model(workspace,scratch,prompt,**kwargs):
+   value=json.loads(self.harness(workspace,scratch,prompt,**kwargs))
+   value['summary']=summary
+   return json.dumps(value,ensure_ascii=False)
+  result=self.execute(harness=model)
+  self.assertEqual(result['state'],'validated')
+  folder=self.root/'data/deliveries/task-one'
+  receipts=list(folder.glob('*/stage-receipt.json'))
+  self.assertEqual(len(receipts),3)
+  for path in receipts:
+   doc=json.loads(path.read_text())
+   self.assertLessEqual(len(doc['summary']),2000)
+   self.assertEqual(json.loads(pathlib.Path(doc['artifacts'][0]).read_text())['summary'],summary)
+
+ def test_receipt_recovery_preserves_commit_and_runs_all_gates_without_builder(self):
+  import lifecycle_io
+  original=lifecycle_io.validate_receipt
+  summary='Complete implementation details. '*100
+  def model(workspace,scratch,prompt,**kwargs):
+   value=json.loads(self.harness(workspace,scratch,prompt,**kwargs))
+   if kwargs['role']=='builder':
+    value['summary']=summary;scratch.mkdir(parents=True,exist_ok=True);(scratch/'result.md').write_text(json.dumps(value))
+   return json.dumps(value)
+  def legacy(doc):
+   if doc['stage']=='build':raise ValueError('Concise receipt summary required')
+   return original(doc)
+  with patch.object(lifecycle_io,'validate_receipt',side_effect=legacy):
+   with self.assertRaisesRegex(ValueError,'Concise receipt'):self.execute(harness=model)
+  folder=self.root/'data/deliveries/task-one'
+  state=json.loads((folder/'state.json').read_text());calls=[];checks=[]
+  def review(workspace,scratch,prompt,**kwargs):
+   self.assertNotEqual(kwargs['role'],'builder');calls.append(scratch.name)
+   return '{"verdict":"approved","findings":[]}'
+  with patch.object(delivery,'ROOT',self.root),patch.object(delivery,'run',side_effect=review),patch.object(delivery,'command',side_effect=lambda *a,**k:checks.append(a) or subprocess.CompletedProcess([],0,'fresh')),patch('process_owner.alive',return_value=False):
+   (folder/'candidate/app.py').write_text('dirty')
+   with self.assertRaisesRegex(GateError,'dirty'):
+    delivery.execute(self.packet,self.policy,'task-one',publish=False,resume_receipt=True)
+   delivery.git(folder/'candidate','checkout','--','app.py')
+   result=delivery.execute(self.packet,self.policy,'task-one',publish=False,resume_receipt=True,emit=lambda *_:None)
+  self.assertEqual(result['state'],'validated')
+  self.assertEqual(result['target_sha'],state['target_sha'])
+  self.assertEqual(result['builder_run'],state['builder_run'])
+  self.assertEqual(len(calls),2);self.assertEqual(len(checks),1)
+  self.assertTrue((folder/state['builder_run']/'stage-receipt.json').exists())
+  self.assertEqual(result['reviews']['standard']['target_sha'],state['target_sha'])
+
+ def test_receipt_recovery_cannot_resume_business_blocker(self):
+  def model(workspace,scratch,prompt,**kwargs):
+   if kwargs['role']=='builder':return '{"verdict":"blocked","findings":["Missing authority"]}'
+   return self.harness(workspace,scratch,prompt,**kwargs)
+  with self.assertRaisesRegex(GateError,'Builder blocked'):self.execute(harness=model)
+  with patch.object(delivery,'ROOT',self.root),patch('process_owner.alive',return_value=False),patch.object(delivery,'run',side_effect=AssertionError('No model calls')):
+   with self.assertRaises(GateError):
+    delivery.execute(self.packet,self.policy,'task-one',publish=False,resume_receipt=True)

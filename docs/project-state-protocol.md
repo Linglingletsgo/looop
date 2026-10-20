@@ -52,3 +52,16 @@ stage 可为 plan、advisory、build、review、acceptance、integration、clean
 ## 升级边界
 
 修改 looop 中的工具和 skill 不会自动覆盖已接入项目的 .agent/tools。每个项目在自己的对话中审核升级并保留本地改动、状态和绑定；首次适配先在一次性副本验证。WOS 保持 context-only，DS1 保持人工工作区。
+
+
+### 长摘要回执与接续
+
+调度器写入的阶段回执是有界索引；超过 2000 字符的摘要保留在引用的 `validated-result.json`，回执使用简短说明。原始 verdict、findings 和完整结果不因摘要缩短而改变。
+
+旧版本已提交候选代码、但因 `Concise receipt summary required` 停止的 Builder，可执行：
+
+```sh
+python3 bin/delivery-control.py resume-receipt TASK_ID --reason '修复回执摘要转换后接续'
+```
+
+此入口只接受已停止且未发布的对应故障，校验原始结果、固定 Packet/策略、干净候选提交及改动范围；保留候选代码并重跑检查和独立审核，不重新调用 Builder，也不直接批准合并。

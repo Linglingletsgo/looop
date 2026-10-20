@@ -90,9 +90,9 @@ def review_navigation(candidate,baseline,target,previous,folder):
   'Read focused ranges; expand only to resolve a concrete correctness question. Conclude when requirements, changed paths and relevant failure cases are covered; do not keep searching solely to produce more findings. No Builder conversation is supplied.\n')
  return text
 
-def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False,resume_repair=False):
+def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False,resume_repair=False,resume_receipt=False):
  validate(packet,policy)
- if sum((resume_review,resume_builder,resume_repair))>1:raise GateError('Choose one resume stage')
+ if sum((resume_review,resume_builder,resume_repair,resume_receipt))>1:raise GateError('Choose one resume stage')
  from execution_settings import read as read_settings,route as execution_route
  execution_settings=read_settings(ROOT)
  # No explicit owner settings yet: keep existing project provider mappings.
@@ -109,11 +109,12 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
   resumed=None
   if statefile.exists():
    old=json.loads(statefile.read_text())
-   if not (resume_review or resume_builder or resume_repair):emit('Existing attempt: '+old['state']+'; no replay');return old
+   if not (resume_review or resume_builder or resume_repair or resume_receipt):emit('Existing attempt: '+old['state']+'; no replay');return old
    from process_owner import alive
    candidate=root/'candidate';target=old.get('target_sha')
    stage_ok=old.get('failed_stage')=='building' if resume_builder else old.get('failed_stage','').startswith('review_')
    if resume_repair:stage_ok=old.get('error')=='Round limit reached; Product disposition required' and old.get('failure',{}).get('category')=='product_disposition' and any(v.get('verdict')=='changes_requested' and v.get('target_sha')==target for v in old.get('reviews',{}).values())
+   if resume_receipt:stage_ok=old.get('failed_stage')=='building' and old.get('error')=='Concise receipt summary required' and old.get('failure',{}).get('category')=='execution' and not old.get('pending_builder')
    if old['state']!='blocked' or not stage_ok or old.get('pr_url') or alive(old.get('owner')) is not False:raise GateError('Review resume requires an unpublished stopped review worker' if not resume_builder else 'Builder resume requires an unpublished stopped build worker')
    if resume_builder:
     pending=old.get('pending_builder',{})
@@ -123,8 +124,13 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     before=tree(candidate);after=tree(source)
     changes={n for n in before.keys()|after.keys() if before.get(n)!=after.get(n)}
     if not changes or not changes<=set(packet['allowed_paths']):raise GateError('Preserved Builder changes outside Packet scope')
-   if not resume_repair and old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output','Expected one JSON object','Invalid JSON fence','Ambiguous conclusions outside JSON')):raise GateError('Only review output format failures can resume without Builder')
-   if not resume_repair and old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
+   if resume_receipt:
+    rid=old.get('builder_run','')
+    if not re.fullmatch(r'[a-zA-Z0-9-]{1,80}',rid):raise GateError('Missing committed Builder identity')
+    value=saved_result(root/rid/'result.md')
+    if value!=json.loads((root/rid/'validated-result.json').read_text()) or value.get('verdict')!='approved' or not isinstance(value.get('summary'),str) or len(value['summary'])<=2000:raise GateError('Not a verified long-summary receipt failure')
+   if not resume_repair and not resume_receipt and old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output','Expected one JSON object','Invalid JSON fence','Ambiguous conclusions outside JSON')):raise GateError('Only review output format failures can resume without Builder')
+   if not resume_repair and not resume_receipt and old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
    if json.loads((root/'packet.json').read_text())!=packet or json.loads((root/'policy.json').read_text())!=policy:raise GateError('Resume contract or policy changed')
    if git(candidate,'rev-parse','HEAD').decode().strip()!=target or git(candidate,'status','--porcelain').strip():raise GateError('Resume candidate changed or dirty')
    git(candidate,'merge-base','--is-ancestor',sha,target)
@@ -133,7 +139,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    from lifecycle import save
    save(root/('review-resume-'+str(old.get('review_resume_count',0)+1)+'.json'),old)
    resumed=old
-  elif resume_review or resume_builder or resume_repair:raise GateError('No failed review to resume')
+  elif resume_review or resume_builder or resume_repair or resume_receipt:raise GateError('No failed review to resume')
   if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved; regenerate Packet')
   root.mkdir(parents=True,exist_ok=bool(resumed),mode=0o700)
   from process_owner import identity
@@ -148,6 +154,9 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
   def receipt(step,rid,value,target,checks=()):
    from lifecycle_io import validate_receipt,save
    doc={'version':1,'task_id':job,'role':step['role'],'stage':step['stage'],'baseline_sha':sha,'target_sha':target,'verdict':value['verdict'],'summary':value.get('summary') or (step['stage']+' concluded '+value['verdict']),'findings':value.get('findings',[]),'checks':list(checks),'artifacts':[str(root/rid/'validated-result.json')],'unverified':[],'cleanup':[]}
+   # The complete result remains authoritative; this receipt is a bounded index.
+   if isinstance(doc['summary'],str) and len(doc['summary'])>2000:
+    doc['summary']=step['stage']+' concluded '+value['verdict']+'; full summary retained in the referenced validated-result.json.'
    save(root/rid/'stage-receipt.json',validate_receipt(doc))
    state['stage_receipt']=str(root/rid/'stage-receipt.json')
   def role(step,workspace,prompt,metadata=None):
@@ -197,7 +206,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    (root/rid/'validated-result.json').write_text(normalized)
    return rid,normalized
   try:
-   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Continue repairs from preserved candidate and independent findings' if resume_repair else 'Builder output recovery without re-execution' if resume_builder else 'Review format recovery at unchanged target SHA'})
+   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Regenerate receipt for committed Builder; rerun checks and independent review' if resume_receipt else 'Continue repairs from preserved candidate and independent findings' if resume_repair else 'Builder output recovery without re-execution' if resume_builder else 'Review format recovery at unchanged target SHA'})
    persist('building' if resumed else 'planning')
    (root/'packet.json').write_text(json.dumps(packet,ensure_ascii=False,indent=2))
    (root/'policy.json').write_text(json.dumps(policy,ensure_ascii=False,indent=2))
@@ -245,6 +254,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if not raw.exists():raw.write_text(artifact.read_text())
     (artifact.parent/'validated-result.json').write_text(json.dumps(saved_result(artifact),ensure_ascii=False))
    feedback=json.dumps([v for v in resumed.get('reviews',{}).values() if v.get('verdict')=='changes_requested'],ensure_ascii=False) if resume_repair else '';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
+   if resume_receipt:receipt(buildstep,state['builder_run'],value,state['target_sha'])
    review_history=dict(resumed.get('reviews',{}) if resumed else {})
    start=resumed['round']+(1 if resume_repair else 0) if resumed else 1
    for roundno in itertools.count(start):
