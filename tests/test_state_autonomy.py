@@ -85,3 +85,56 @@ class SharedPlanning(unittest.TestCase):
   self.store.submit('test',{'type':'confirm','intent_id':draft,'human_confirmed':True},self.store.read('test')['revision'],'confirm-draft','human:test')
   self.assertEqual(autonomy.next_intent(self.store.context('test'))['id'],draft)
   self.assertEqual(self.store.read('test')['phase'],'ready')
+
+ def test_decision_references_are_context_and_never_bound_as_requirements(self):
+  self.setup_shared()
+  decision=self.store.submit('test',{'type':'decision','title':'Development policy','body':'Existing scope only','human_confirmed':True},self.store.read('test')['revision'],'decision','human:test')['event']['data']['id']
+  self.value['intent_ids']=[self.intent,decision]
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value=json.dumps(self.value)) as run:
+   autonomy.tick('test');self.assertEqual(run.call_count,1)
+  binding=json.loads((self.root/'data/delivery-bindings/delivery-issue.json').read_text())
+  self.assertEqual(binding['intent_ids'],[self.intent])
+  report=json.loads(next((self.root/'data/autonomy/test').glob('*/source-binding.json')).read_text())
+  self.assertEqual(report['decision_context_ids'],[decision])
+  self.assertEqual(self.store.read('test')['intents'][decision]['status'],'ready')
+
+ def test_wrong_requirement_is_corrected_before_binding_without_research_repeat(self):
+  import copy
+  self.setup_shared()
+  other=self.store.submit('test',{'type':'requirement','title':'Other','body':'Lower priority','human_confirmed':True,'priority':'low'},self.store.read('test')['revision'],'other','human:test')['event']['data']['id']
+  bad=copy.deepcopy(self.value);bad['intent_ids']=[other]
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=[json.dumps(bad),json.dumps(self.value)]) as run:
+   autonomy.tick('test');self.assertEqual(run.call_count,2)
+   self.assertIn('controller-selected',run.call_args.args[2]);self.research_mock.assert_called_once()
+  binding=json.loads((self.root/'data/delivery-bindings/delivery-issue.json').read_text())
+  self.assertEqual(binding['intent_ids'],[self.intent])
+
+ def test_source_identity_rejects_unknown_unconfirmed_and_malformed_ids(self):
+  shared={'intents':{'decision':{'kind':'decision','status':'ready'},'draft':{'kind':'propose','status':'proposed'},'old':{'kind':'decision','status':'superseded'}}}
+  self.assertEqual(autonomy.source_intents({'intent_ids':['decision']},shared,None,None),([],['decision']))
+  for ids in [['missing'],['draft'],['old'],['decision','decision'],[{}],'decision']:
+   with self.subTest(ids=ids),self.assertRaises(ValueError):autonomy.source_intents({'intent_ids':ids},shared,None,None)
+  with self.assertRaises(ValueError):autonomy.source_intents({'intent_ids':['decision']},shared,{'id':'draft'},None)
+
+ def test_saved_proposal_recovery_reuses_scope_and_runs_product_gate(self):
+  import copy
+  self.setup_shared()
+  self.store.defer_intent('test',self.intent,'Not the active goal',1)
+  self.store.bind('test','previous',{},provenance={'product_goal':self.value['product_goal']},planning_revision=self.store.read('test')['planning_revision'])
+  self.store.transition('test','previous','completed',import_existing=True)
+  doc=self.store.read('test');self.mandate['scope_approval']='product'
+  (self.root/'data/autonomy-policies/test.json').write_text(json.dumps(self.mandate))
+  decision=self.store.submit('test',{'type':'decision','title':'Policy','body':'Keep scope','human_confirmed':True},doc['revision'],'policy','human:test')['event']['data']['id']
+  doc=self.store.read('test')
+  value=copy.deepcopy(self.value);value['intent_ids']=[decision];value['backlog_item']=None
+  prior=self.root/'data/autonomy/test/old-pm';prior.mkdir(parents=True)
+  prior_state={'state':'cancelled','retry_pending':True,'reuse_saved_proposal':'old-pm','interrupted_planning':True,'baseline_sha':self.sha,'planning_revision':doc['planning_revision'],'goal_id':doc['product_goal']['id'],'selected_intent':None}
+  (prior/'state.json').write_text(json.dumps(prior_state));(prior/'proposal.json').write_text(json.dumps(value))
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"verdict":"approved","findings":[],"reason":"Within scope"}') as run:
+   autonomy.tick('test');self.assertEqual(run.call_count,1)
+   self.assertIn('independent Product scope approver',run.call_args.args[2])
+  self.research_mock.assert_not_called()
+  binding=json.loads((self.root/'data/delivery-bindings/delivery-issue.json').read_text())
+  self.assertEqual(binding['intent_ids'],[])
+  self.assertEqual(binding['packet']['title'],value['packet']['title'])
+  self.assertEqual(json.loads((prior/'proposal.json').read_text()),value)

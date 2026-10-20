@@ -39,6 +39,8 @@ def retry(root,lane,job,reason,expected,board):
    issue=board.api('GET','/issues/'+state['issue'])
    if issue.get('projectId')!=cfg['id'] or issue.get('status') not in ('in_progress','blocked','cancelled'):raise ValueError('PM 任务状态不匹配，需要先核对。')
    board.api('PATCH','/issues/'+state['issue'],{'status':'cancelled','comment':'人工核验后重新规划，原提案保留：'+reason[:2000]})
+  if state.get('error')=='No executable confirmed requirement selected' and (path.parent/'proposal.json').is_file():
+   state['reuse_saved_proposal']=job
   state['research_checkpoint']=str(path.parent)
   report=path.parent/'research.json'
   if report.is_file():

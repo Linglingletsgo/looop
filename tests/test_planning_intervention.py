@@ -93,3 +93,12 @@ class PlanningIntervention(unittest.TestCase):
   from planning_intervention import resume_completion
   self.prepare_completion()
   with self.assertRaisesRegex(ValueError,'stopped'):resume_completion(self.root,'demo','pm-one','Evidence repaired',self.before,self.board)
+
+ @patch('planning_intervention.alive',return_value=False)
+ def test_legacy_source_binding_recovery_marks_original_proposal_for_revalidation(self,*_):
+  self.state['error']='No executable confirmed requirement selected';self.path.write_text(json.dumps(self.state))
+  proposal=self.path.parent/'proposal.json';proposal.write_text('{"action":"task","intent_ids":["decision"]}')
+  original=proposal.read_bytes()
+  retry(self.root,'demo','pm-one','Source binding corrected',self.store.read('demo')['revision'],self.board)
+  self.assertEqual(json.loads(self.path.read_text())['reuse_saved_proposal'],'pm-one')
+  self.assertEqual(proposal.read_bytes(),original)

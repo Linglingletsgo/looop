@@ -11,6 +11,7 @@ from provider_state import paused
 from planning_runtime import invoke
 from process_owner import identity
 from planning_intervention import unresolved,blocked_patch
+from planning_sources import source_intents,saved_proposal
 from product_goals import EXPERIENCE_INSTRUCTIONS
 from source_evidence import verify_completion
 from product_goals import active as active_goal,proposal as goal_proposal,INSTRUCTIONS as GOAL_INSTRUCTIONS,summary as goal_summary
@@ -310,9 +311,13 @@ def tick(lane):
      else:
       checked=checked_proposal(value,mandate,workspace,sha,history)
       if checked:
+       source_intents(value,shared,selected,current_goal)
        validate(checked[0],policy)
        if not current_goal:check_source(value,mode['selection_mode'],selected,items)
        goal_proposal(value.get('product_goal'),current_goal)
+    if value is None:
+     value,source=saved_proposal(ROOT,lane,pending,sha,revision,current_goal,selected_id,fresh,validate_pm)
+     if source:receipt['proposal_source']=source;save(folder/'state.json',receipt)
     if value is None:value=invoke(run,workspace,folder/'pm',contract(registry,mandate['pm_role'])+'\n'+prompt+'\nThe research phase has ended. If supported, now define the implementation Packet within the mandate; an earlier investigation-only stopping condition does not require another planning cycle. Use verification Agent receipts as observations, not merge approval.\nVerified research brief: '+json.dumps(research_brief(report or (current_goal or {}).get('research')),ensure_ascii=False),fresh,validate=validate_pm,role='readonly',timeout=None,provider_id='codex',execution_route=planning_route,dependencies=policy.get('dependencies'))
     save(folder/'proposal.json',value)
     if value.get('action')=='goal_complete':
@@ -339,15 +344,11 @@ def tick(lane):
      if store:store.selection(lane,'no_work',value['reason'])
      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'本轮未选出范围内任务；持续模式立即进入下一轮调研。'+value['reason']});return 'continue'
     packet,key=checked;validate(packet,policy)
-    intent_ids=value.get('intent_ids',[])
-    if not isinstance(intent_ids,list) or len(intent_ids)!=len(set(intent_ids)):raise ValueError('Invalid source intent_ids')
-    if store:
-     for intent in intent_ids:
-      if intent not in shared['intents'] or not (shared['intents'][intent]['status']=='ready' or current_goal and intent in current_goal.get('intent_ids',[]) and shared['intents'][intent]['status']=='scheduled'):raise ValueError('PM cited unconfirmed intent')
-     if selected and intent_ids!=[selected_id]:raise ValueError('Task must implement exactly the controller-selected requirement')
-     if not selected and intent_ids:raise ValueError('No executable confirmed requirement selected')
-     if store.read(lane)['planning_revision']!=revision:raise Conflict('External decisions changed during planning; stale proposal retained, not dispatched')
-    elif intent_ids:raise ValueError('No shared state for cited intents')
+    intent_ids,decision_refs=source_intents(value,shared,selected,current_goal)
+    if decision_refs:
+     save(folder/'source-binding.json',{'reported_intent_ids':value.get('intent_ids',[]),'intent_ids':intent_ids,'decision_context_ids':decision_refs})
+    value={**value,'intent_ids':intent_ids}
+    if store and store.read(lane)['planning_revision']!=revision:raise Conflict('External decisions changed during planning; stale proposal retained, not dispatched')
     receipt['fingerprint']=key
     if mandate.get('scope_approval','product')=='product':
      receipt['state']='product_scope_review';save(folder/'state.json',receipt)
