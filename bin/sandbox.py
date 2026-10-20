@@ -1,7 +1,7 @@
 """Compatibility entry point: native harness processes, not a model/tool runtime."""
 import contextlib,json,os,pathlib,re,shutil,signal,subprocess,threading,tomllib
 from runtime import ROOT
-from provider_state import pause,paused
+from provider_state import pause_from_events,paused
 
 HARNESS_IDS=('codex','claude','omp')
 COMPATIBILITY={'codex':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode'),'omp':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode'),'claude':('claude_subscription','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode')}
@@ -171,11 +171,11 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
  if before is not None and source_fingerprint(workspace)!=before:raise RuntimeError('Read-only Harness modified source; result rejected')
  if thread_error:raise RuntimeError('Harness log collection failed')
  events=tail.decode(errors='replace')
- status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+)(401|402|403|429)\b',events,re.I)
+ status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+|API Error: Request rejected \()(401|402|403|429)\b',events,re.I)
  try:result,usage=final_text(harness,events)
  except RuntimeError:
   if status:
-   pause(ROOT,provider,int(status[1]),None);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
+   pause_from_events(ROOT,provider,int(status[1]),events);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
   raise
  if harness=='codex':
   path=scratch/'result.md'
@@ -185,9 +185,9 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
  (scratch/'usage.json').write_text(json.dumps({'harness':harness,'provider':provider,'model':model,**usage,'remaining':'unknown'},indent=2))
  if proc.returncode or (not result and handoff_identity is None):
   # CLI formats differ; only explicit HTTP status evidence pauses a provider.
-  status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+)(401|402|403|429)\b',events,re.I)
+  status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+|API Error: Request rejected \()(401|402|403|429)\b',events,re.I)
   if status:
-   pause(ROOT,provider,int(status[1]),None);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
+   pause_from_events(ROOT,provider,int(status[1]),events);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
   raise RuntimeError('Harness failed; inspect owner-only events.jsonl')
  if handoff_identity is not None:
   from handoff import read

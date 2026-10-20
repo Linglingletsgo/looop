@@ -64,6 +64,20 @@ class ProviderRecovery(unittest.TestCase):
  def test_http_date_and_minimum_delay(self):
   v=pause(self.root,'codex',429,'Thu, 01 Jan 1970 00:03:20 GMT',now=100);self.assertEqual(v['resume_at'],200)
   v=pause(self.root,'codex',429,'1',now=100);self.assertEqual(v['resume_at'],160)
+ def test_workbuddy_explicit_reset_from_error_expires_without_model_call(self):
+  import datetime
+  from provider_state import pause_from_events
+  reset=datetime.datetime(2026,10,20,14,10,46,tzinfo=datetime.timezone.utc).timestamp()
+  message='API Error: Request rejected (429) · WorkBuddy: 您的使用量已超出频率限制，将在 2026-10-20 22:10:46 UTC+8 重置，您也可以切换其他模型继续使用。'
+  events=json.dumps({'type':'result','is_error':True,'result':message},ensure_ascii=False)
+  value=pause_from_events(self.root,'magpie_deepseek',429,events,now=reset-600)
+  self.assertEqual(value['resume_at'],reset)
+  self.assertIsNotNone(paused(self.root,'magpie_deepseek',now=reset-1))
+  self.assertIsNone(paused(self.root,'magpie_deepseek',now=reset))
+  for error,status in [(False,429),(True,401)]:
+   value=pause_from_events(self.root,'magpie_deepseek',status,json.dumps({'type':'result','is_error':error,'result':message}),now=reset-600)
+   self.assertNotIn('resume_at',value)
+
 class IntegratedPlanning(unittest.TestCase):
  def test_transient_pm_failure_still_creates_exactly_one_binding(self):
   import test_state_autonomy,autonomy

@@ -65,3 +65,16 @@ python3 bin/delivery-control.py resume-receipt TASK_ID --reason '修复回执摘
 ```
 
 此入口只接受已停止且未发布的对应故障，校验原始结果、固定 Packet/策略、干净候选提交及改动范围；保留候选代码并重跑检查和独立审核，不重新调用 Builder，也不直接批准合并。
+
+
+### 目标完成证据与保存结果接续
+
+目标完成证据区分两种根目录：`kind: repository` 的 path 相对项目仓库；`kind: runtime_check`（及体验核验的 `agent_walkthrough` / `user_test`）的 path 相对该轮 PM 报告根目录，并携带当前完整 `target_sha`。两类证据都校验逐字引文。旧回执中指向同一轮 PM 根目录的完整路径仍可读取，但未标注类型/SHA 的旧运行报告必须在正文中明确包含当前完整 SHA；禁止借用其它轮次、越级或符号链接文件。
+
+已停止、未绑定开发任务的 PM 若因上述适配问题受阻，可在核对状态版本后直接验证保存的文件结果：
+
+```sh
+python3 bin/planning_intervention.py resume-completion PROJECT PLANNING_RUN --expected REVISION --run-id pm-retry-1 --reason '运行证据路径适配已修复并核验'
+```
+
+此入口核对原生 handoff 身份、当前目标和规划版本、干净且未移动的基线、全部判据的引文及运行证据归属；保留原始 handoff，不调用模型或重做开发。只有原结果本来就是 `goal_complete` 才会接收。WorkBuddy 明确报告的 HTTP 429 重置时间会记录为路线冷却；到期由既有循环恢复可用，不新增付费回退或人工等待时限。

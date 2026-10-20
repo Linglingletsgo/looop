@@ -41,3 +41,55 @@ class PlanningIntervention(unittest.TestCase):
   self.assertEqual(completion_coverage(evidence,['A','B']),evidence)
   for bad in ([{'criterion':'A'}],[{'criterion':'A'},{'criterion':'B'},{'criterion':'invented'}],[],[{'criterion':[]} ]):
    with self.assertRaises(ValueError):completion_coverage(bad,['A','B'])
+
+ def prepare_completion(self):
+  import subprocess
+  from repository import git
+  from handoff import prepare
+  self.repo=self.root/'repo';self.repo.mkdir()
+  subprocess.run(['git','init','-q',str(self.repo)],check=True)
+  git(self.repo,'config','user.name','Synthetic');git(self.repo,'config','user.email','test@example.test')
+  (self.repo/'spec.md').write_text('Observed completed outcome')
+  git(self.repo,'add','.');git(self.repo,'commit','-qm','baseline')
+  self.sha=git(self.repo,'rev-parse','HEAD').decode().strip()
+  goal={'title':'Outcome','user_value':'Observable benefit','success_criteria':['Observed outcome'],'remaining':['Verify outcome'],'progress':'Delivered','slice_value':'Full outcome'}
+  self.store.bind('demo','task',{},provenance={'product_goal':goal})
+  self.store.transition('demo','task','completed',import_existing=True)
+  doc=self.store.read('demo');goal=doc['product_goal']
+  self.state.update(goal_id=goal['id'],planning_revision=doc['planning_revision'],baseline_sha=self.sha)
+  self.path.write_text(json.dumps(self.state))
+  (self.root/'data/control.json').write_text(json.dumps({'projects':{'demo':{'id':'project','repo':str(self.repo)}}}))
+  scratch=self.path.parent/'pm';scratch.mkdir();identity=prepare(scratch,{'type':'object'})
+  (scratch/'report.md').write_text('Baseline '+self.sha+': Verified outcome')
+  self.value={'action':'goal_complete','goal_id':goal['id'],'reason':'Verified delivered outcome','completion_evidence':[{'criterion':'Observed outcome','kind':'runtime_check','path':'report.md','target_sha':self.sha,'quote':'Verified outcome'}]}
+  (scratch/'handoff.json').write_text(json.dumps({**identity,'result':self.value}))
+  self.before=self.store.read('demo')['revision']
+ @patch('planning_intervention.alive',return_value=False)
+ def test_saved_completion_runs_zero_models_and_preserves_handoff(self,*_):
+  from planning_intervention import resume_completion
+  self.prepare_completion();p=self.path.parent/'pm/handoff.json';before=p.read_bytes()
+  with patch('sandbox.run',side_effect=AssertionError('No model calls')):
+   result=resume_completion(self.root,'demo','pm-one','Evidence resolver repaired',self.before,self.board)
+  self.assertEqual(result['model_calls'],0);self.assertTrue(result['goal_completed'])
+  self.assertEqual(p.read_bytes(),before)
+  self.assertEqual(self.store.read('demo')['product_goal']['status'],'completed')
+  state=json.loads(self.path.read_text());self.assertEqual(state['state'],'no_work');self.assertNotIn('error',state)
+  self.assertEqual(self.board.api.call_args.args[2]['status'],'done')
+ @patch('planning_intervention.alive',return_value=False)
+ def test_saved_completion_rejects_stale_contract_dirty_code_and_invented_proof(self,*_):
+  from planning_intervention import resume_completion
+  from repository import git
+  self.prepare_completion()
+  with self.assertRaises(Conflict):resume_completion(self.root,'demo','pm-one','Evidence repaired',self.before-1,self.board)
+  (self.repo/'spec.md').write_text('Dirty')
+  with self.assertRaisesRegex(ValueError,'dirty'):resume_completion(self.root,'demo','pm-one','Evidence repaired',self.before,self.board)
+  git(self.repo,'checkout','--','spec.md')
+  (self.path.parent/'pm/report.md').write_text('No execution proof')
+  with self.assertRaisesRegex(ValueError,'not found'):resume_completion(self.root,'demo','pm-one','Evidence repaired',self.before,self.board)
+  self.assertEqual(self.store.read('demo')['product_goal']['status'],'active')
+  self.board.api.assert_not_called()
+ @patch('planning_intervention.alive',return_value=True)
+ def test_saved_completion_rejects_live_owner(self,*_):
+  from planning_intervention import resume_completion
+  self.prepare_completion()
+  with self.assertRaisesRegex(ValueError,'stopped'):resume_completion(self.root,'demo','pm-one','Evidence repaired',self.before,self.board)

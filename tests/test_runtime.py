@@ -129,3 +129,13 @@ class Runtime(unittest.TestCase):
    (root/'web').mkdir();(root/'web/tsconfig.tsbuildinfo').write_text('compiler cache')
    self.assertEqual(source_fingerprint(root),before);self.assertEqual(tree(root),scope)
    (root/'source.ts').write_text('const n = 2');self.assertNotEqual(source_fingerprint(root),before);self.assertNotEqual(tree(root),scope)
+
+ def test_workbuddy_parenthesized_429_is_provider_pause_not_generic_execution_failure(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);work=root/'work';work.mkdir()
+   event={'type':'result','is_error':True,'result':'API Error: Request rejected (429) · WorkBuddy: usage limit'}
+   code="import sys;sys.stdin.read();print("+repr(json.dumps(event))+")"
+   with patch.object(sandbox,'ROOT',root),patch.object(sandbox,'invocation',return_value=(['python3','-c',code],os.environ.copy(),'fixture')):
+    with self.assertRaisesRegex(RuntimeError,'quota: HTTP 429'):
+     sandbox.run(work,root/'run','fixture',execution_route={'harness':'claude','provider':'magpie_deepseek'})
+   self.assertEqual(json.loads((root/'data/quota-magpie_deepseek.json').read_text())['http_status'],429)
