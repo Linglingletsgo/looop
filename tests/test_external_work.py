@@ -101,7 +101,7 @@ class ExternalWork(unittest.TestCase):
  def test_exported_tools_run_without_scheduler_imports(self):
   repo,sha=self.git_repo();tools=repo/'.agent/tools';tools.mkdir(parents=True)
   source=pathlib.Path(__file__).resolve().parents[1]/'bin'
-  for name in ('project-session.py','project_state.py','product_goals.py','lifecycle_io.py'):shutil.copy2(source/name,tools/name)
+  for name in ('project-session.py','project_state.py','state_revisions.py','product_goals.py','lifecycle_io.py'):shutil.copy2(source/name,tools/name)
   def command(*args):
    return json.loads(subprocess.check_output([sys.executable,str(tools/'project-session.py'),*args,'--repo',str(repo)],text=True,cwd=self.root))
   command('init');command('start','--id','one','--summary','Independent work')

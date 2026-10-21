@@ -32,7 +32,7 @@ def preview(repo,projects_root=None):
  link=path/'.agent/local/link.json'
  lane=json.loads(link.read_text())['lane'] if link.exists() else re.sub('[^a-z0-9-]','-',path.name.lower()).strip('-')[:40]
  if not lane or not lane[0].isalpha():lane='project-'+lane
- local_targets=['.gitignore','AGENTS.md','.agent/project.json','.agent/tools/project-session.py','.agent/tools/project_state.py','.agent/tools/product_goals.py','.agent/tools/lifecycle_io.py','.agent/local/link.json']
+ local_targets=['.gitignore','AGENTS.md','.agent/project.json','.agent/tools/project-session.py','.agent/tools/project_state.py','.agent/tools/state_revisions.py','.agent/tools/product_goals.py','.agent/tools/lifecycle_io.py','.agent/local/link.json']
  rule_paths+= [n for n in local_targets if (path/n).is_file()]
  evidence={n:hashlib.sha256((path/n).read_bytes()).hexdigest() for n in sorted(set(rule_paths))}
  result={'suggested_lane':lane,'planned_changes':['.agent/project.json（仅在缺失时创建 context-only 配置）','.agent/tools/（安装独立状态工具，已有不同版本时停止）','.agent/local/（忽略 Git 的项目当前状态）','AGENTS.md / .gitignore（追加简短状态入口与本地状态忽略规则）','Paperclip 观察项目（不创建执行 agent、不启用自动开发）'],'repo':str(path),'name':path.name,'revision':draft['repository_revision'],'tier':draft['profile_tier'],'worktree':worktree,'adapter_present':bool(adapter),'roles':role_list,'workflow':workflow,'checks':checks,'rules':sorted(set(rule_paths)),'references':[n for n in sorted(files) if pathlib.PurePosixPath(n).name.lower() in ('handoff.md','backlog.md','readme.md')][:20],'lockfiles':sorted(n for n in files if pathlib.PurePosixPath(n).name in ('package-lock.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock')),'dependencies':dependencies,'warnings':warnings,'automatic_scheduling':False,'allowed_paths':adapter.get('allowed_paths',[]) if adapter else [],'next_action':'已适配项目可通过项目对话维护当前状态；尚未适配的项目请让 agent 使用 project-adapter skill 完成映射。预览不授予执行或发布权限。'}
@@ -64,7 +64,7 @@ def connect(root,repo,fingerprint,board=None):
   if link.exists():
    existing=json.loads(link.read_text())
    if pathlib.Path(existing['runtime']).resolve()!=runtime.resolve() or existing['lane']!=lane:raise ValueError('项目已有其它状态绑定，请在项目对话中连接，不能覆盖。')
-  tool_sources={'project-session.py':root/'bin/project-session.py','project_state.py':root/'bin/project_state.py','product_goals.py':root/'bin/product_goals.py','lifecycle_io.py':root/'bin/lifecycle_io.py'}
+  tool_sources={'project-session.py':root/'bin/project-session.py','project_state.py':root/'bin/project_state.py','state_revisions.py':root/'bin/state_revisions.py','product_goals.py':root/'bin/product_goals.py','lifecycle_io.py':root/'bin/lifecycle_io.py'}
   for name,source in tool_sources.items():
    target=repo/'.agent/tools'/name
    if target.exists() and (target.is_symlink() or target.read_bytes()!=source.read_bytes()):raise ValueError('项目工具已有不同版本；请在项目对话中审核升级。')

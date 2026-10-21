@@ -24,11 +24,17 @@ try{
  const command={action:'intent',lane:'fixture',revision:0,request_id:'http-requirement',title:'Product request',body:'Observable product improvement',priority:'high'};
  let response=await post(command);assert.equal(response.status,200);let value=await response.json();assert.equal(value.result.revision,1);
  response=await post(command);assert.equal(response.status,200);assert.equal((await response.json()).result.replayed,true);
- assert.equal((await post({...command,request_id:'stale'})).status,409);
+ assert.equal((await post({action:'loop',lane:'fixture',mode:'paused',revision:0,request_id:'stale-control'})).status,409);
  assert.equal((await post({action:'loop',lane:'fixture',mode:'continuous',revision:1,request_id:'forbidden'})).status,422);
  response=await post({action:'loop',lane:'fixture',mode:'paused',revision:1,request_id:'pause'});assert.equal(response.status,200);
  response=await post({action:'settings',lane:'fixture',revision:2,request_id:'selection-settings',selection_mode:'backlog_and_research',daily_limit:null});assert.equal(response.status,200);assert.equal((await response.json()).result.revision,3);
  assert.equal((await post({action:'settings',lane:'fixture',revision:3,request_id:'bad-selection',selection_mode:'anything',daily_limit:null})).status,422);
+ const decision={...command,kind:'decision',revision:0,request_id:'stale-decision',title:'Commercial product direction'};
+ response=await post(decision);assert.equal(response.status,200);assert.equal((await response.json()).result.revision,4);
+ response=await post(decision);assert.equal(response.status,200);assert.equal((await response.json()).result.replayed,true);
+ assert.equal((await post({...decision,body:'Changed meaning'})).status,409);
+ assert.equal((await post({...decision,revision:999,request_id:'future-decision'})).status,409);
+ assert.equal((await post({action:'loop',lane:'fixture',mode:'paused',revision:3,request_id:'stale-pause'})).status,409);
  const executor={action:'execution_settings',revision:0,request_id:'http-executor',harness:'codex',routes:Object.fromEntries(['planning','build','review','acceptance','advisory'].map(s=>[s,'codex'])),codex_model:null};
  response=await post(executor);assert.equal(response.status,200);assert.equal((await response.json()).result.revision,1);
  response=await post(executor);assert.equal((await response.json()).result.replayed,true);

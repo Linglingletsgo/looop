@@ -121,7 +121,8 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    row=c.execute('SELECT doc FROM projects WHERE lane=?',(lane,)).fetchone()
    if not row:raise ValueError('Unknown initialized project')
    doc=json.loads(row['doc'])
-   if expected is not None and expected!=doc['revision']:raise Conflict('Project state changed: expected '+str(expected)+', current '+str(doc['revision'])+'; reread and reassess')
+   from state_revisions import check
+   check(expected,doc['revision'],command,source)
    if c.execute('SELECT count(*) FROM outbox WHERE lane=? AND delivered=0',(lane,)).fetchone()[0]>=5000:raise Held('State sync backlog full; synchronize before new events')
    value=apply(doc)
    if value is None:return {'revision':doc['revision'],'unchanged':True}
