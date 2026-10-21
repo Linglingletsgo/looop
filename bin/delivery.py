@@ -58,41 +58,11 @@ def check_result(text):
  from gates import verdict
  return verdict(text)
 
-def saved_result(report,stage='build'):
- # Modern runs hand off through a file; legacy attempts retain their original transport.
- repaired=report.parent/'repaired-result.json'
- if repaired.is_file() and not repaired.is_symlink():return check_result(repaired.read_text())
- path=report.parent/'handoff.json'
- if path.exists() or path.is_symlink() or (report.parent/'handoff.schema.json').exists():
-  from handoff import read
-  schema=json.loads((report.parent/'handoff.schema.json').read_text())
-  identity={'version':1,'run_id':report.parent.name,'nonce':schema['properties']['nonce']['enum'][0]}
-  result=read(report.parent,delivery_schema(stage),identity)
-  return check_result(json.dumps(result,ensure_ascii=False))
- return check_result(report.read_text())
+from delivery_evidence import saved_result,check_context,review_navigation,artifacts_digest,evidence_repair
 
-def check_context(target,checks,receipt):
- # Successful output is evidence on disk, not repeated prompt context.
- return ('\nVerification Agent receipt: '+json.dumps({'target_sha':target,'receipt_path':str(receipt),'checks':[{'argv':c['argv'],'exit_code':c['exit_code']} for c in checks]},ensure_ascii=False)+
-  '\nThese checks already ran on this exact target. Read the receipt for full output when needed. Run additional targeted checks for a specific suspected defect or project requirement; do not repeat the full suite solely for confirmation.\n')
-
-def review_navigation(candidate,baseline,target,previous,folder):
- changed=git(candidate,'diff','--name-status',baseline,target).decode().strip()
- text='\nReview navigation (controller facts, not an approval):\nFull change: git diff '+baseline+' '+target+'\nChanged files:\n'+changed+'\n'
- if previous and previous.get('target_sha') and previous.get('run_id'):
-  prior=previous['target_sha']
-  git(candidate,'merge-base','--is-ancestor',prior,target)
-  report=folder/previous['run_id']/'validated-result.json'
-  text+='Previous independent review at '+prior+'; verdict '+previous['verdict']+'. Full findings: '+str(report)+'\n'
-  text+='Prior findings (navigation only): '+json.dumps(previous.get('findings',[]),ensure_ascii=False)[:6000]+'\n'
-  if prior!=target:text+='Repair delta: git diff '+prior+' '+target+'\n'
- text+=('Start with the diff and trace changed behavior into relevant callers and tests. For re-review, verify prior findings and repair regressions first, then independently assess the complete baseline-to-target change. Prior approval never approves a new SHA. '
-  'Read focused ranges; expand only to resolve a concrete correctness question. Conclude when requirements, changed paths and relevant failure cases are covered; do not keep searching solely to produce more findings. No Builder conversation is supplied.\n')
- return text
-
-def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False,resume_repair=False,resume_receipt=False):
+def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume_builder=False,resume_repair=False,resume_receipt=False,resume_evidence=False):
  validate(packet,policy)
- if sum((resume_review,resume_builder,resume_repair,resume_receipt))>1:raise GateError('Choose one resume stage')
+ if sum((resume_review,resume_builder,resume_repair,resume_receipt,resume_evidence))>1:raise GateError('Choose one resume stage')
  from execution_settings import read as read_settings,route as execution_route
  execution_settings=read_settings(ROOT)
  # No explicit owner settings yet: keep existing project provider mappings.
@@ -109,13 +79,15 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
   resumed=None
   if statefile.exists():
    old=json.loads(statefile.read_text())
-   if not (resume_review or resume_builder or resume_repair or resume_receipt):emit('Existing attempt: '+old['state']+'; no replay');return old
+   if not (resume_review or resume_builder or resume_repair or resume_receipt or resume_evidence):emit('Existing attempt: '+old['state']+'; no replay');return old
    from process_owner import alive
    candidate=root/'candidate';target=old.get('target_sha')
    stage_ok=old.get('failed_stage')=='building' if resume_builder else old.get('failed_stage','').startswith('review_')
    if resume_repair:stage_ok=old.get('error')=='Round limit reached; Product disposition required' and old.get('failure',{}).get('category')=='product_disposition' and any(v.get('verdict')=='changes_requested' and v.get('target_sha')==target for v in old.get('reviews',{}).values())
    if resume_receipt:stage_ok=old.get('failed_stage')=='building' and old.get('error')=='Concise receipt summary required' and old.get('failure',{}).get('category')=='execution' and not old.get('pending_builder')
+   if resume_evidence:stage_ok=old.get('error')=='No change inside Packet scope' and old.get('failed_stage')=='building'
    if old['state']!='blocked' or not stage_ok or old.get('pr_url') or alive(old.get('owner')) is not False:raise GateError('Review resume requires an unpublished stopped review worker' if not resume_builder else 'Builder resume requires an unpublished stopped build worker')
+   if resume_evidence:evidence_run,evidence_value=evidence_repair(root,old,tree)
    if resume_builder:
     pending=old.get('pending_builder',{})
     if not re.fullmatch(r'[a-zA-Z0-9-]+',pending.get('run_id','')) or pending.get('workspace')!='build-'+str(old['round']) or pending.get('previous_target')!=target:raise GateError('Missing original Builder receipt')
@@ -129,8 +101,8 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if not re.fullmatch(r'[a-zA-Z0-9-]{1,80}',rid):raise GateError('Missing committed Builder identity')
     value=saved_result(root/rid/'result.md')
     if value!=json.loads((root/rid/'validated-result.json').read_text()) or value.get('verdict')!='approved' or not isinstance(value.get('summary'),str) or len(value['summary'])<=2000:raise GateError('Not a verified long-summary receipt failure')
-   if not resume_repair and not resume_receipt and old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output','Expected one JSON object','Invalid JSON fence','Ambiguous conclusions outside JSON')):raise GateError('Only review output format failures can resume without Builder')
-   if not resume_repair and not resume_receipt and old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
+   if not resume_repair and not resume_receipt and not resume_evidence and old.get('failure',{}).get('category')!='model_output' and not old.get('error','').startswith(('Expecting value:','Extra data:','invalid review output','Expected one JSON object','Invalid JSON fence','Ambiguous conclusions outside JSON')):raise GateError('Only review output format failures can resume without Builder')
+   if not resume_repair and not resume_receipt and not resume_evidence and old.get('review_resume_count',0)>=2:raise GateError('Review resume budget exhausted')
    if json.loads((root/'packet.json').read_text())!=packet or json.loads((root/'policy.json').read_text())!=policy:raise GateError('Resume contract or policy changed')
    if git(candidate,'rev-parse','HEAD').decode().strip()!=target or git(candidate,'status','--porcelain').strip():raise GateError('Resume candidate changed or dirty')
    git(candidate,'merge-base','--is-ancestor',sha,target)
@@ -139,7 +111,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    from lifecycle import save
    save(root/('review-resume-'+str(old.get('review_resume_count',0)+1)+'.json'),old)
    resumed=old
-  elif resume_review or resume_builder or resume_repair or resume_receipt:raise GateError('No failed review to resume')
+  elif resume_review or resume_builder or resume_repair or resume_receipt or resume_evidence:raise GateError('No failed review to resume')
   if git(repo,'rev-parse','HEAD').decode().strip()!=sha:raise GateError('Baseline moved; regenerate Packet')
   root.mkdir(parents=True,exist_ok=bool(resumed),mode=0o700)
   from process_owner import identity
@@ -148,9 +120,10 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    state.update({k:resumed[k] for k in ('round','target_sha','builder_run') if k in resumed})
    state['review_resume_count']=resumed.get('review_resume_count',0)+1
    state['rejected_trees']=resumed.get('rejected_trees',[])
+   state['rejected_evidence']=resumed.get('rejected_evidence',[])
    if resume_repair:state['rejected_trees']=(state['rejected_trees']+[git(candidate,'rev-parse',target+'^{tree}').decode().strip()])[-8:]
   def persist(stage):
-   state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error'),'stage_receipt':state.get('stage_receipt')});emit(stage)
+   state['state']=stage;state['updated_at']=time.time();p=statefile.with_suffix('.tmp');p.write_text(json.dumps(state,indent=2));p.replace(statefile);record_phase(ROOT,job,phase_of(state),{'target_sha':state.get('target_sha'),'pr_url':state.get('pr_url'),'error':state.get('error'),'stage_receipt':state.get('stage_receipt'),'product_clarification':state.get('product_clarification')});emit(stage)
   def receipt(step,rid,value,target,checks=()):
    from lifecycle_io import validate_receipt,save
    doc={'version':1,'task_id':job,'role':step['role'],'stage':step['stage'],'baseline_sha':sha,'target_sha':target,'verdict':value['verdict'],'summary':value.get('summary') or (step['stage']+' concluded '+value['verdict']),'findings':value.get('findings',[]),'checks':list(checks),'artifacts':[str(root/rid/'validated-result.json')],'unverified':[],'cleanup':[]}
@@ -206,7 +179,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    (root/rid/'validated-result.json').write_text(normalized)
    return rid,normalized
   try:
-   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Regenerate receipt for committed Builder; rerun checks and independent review' if resume_receipt else 'Continue repairs from preserved candidate and independent findings' if resume_repair else 'Builder output recovery without re-execution' if resume_builder else 'Review format recovery at unchanged target SHA'})
+   if resumed:record_phase(ROOT,job,'queued',{'recovery_reason':'Regenerate receipt for committed Builder; rerun checks and independent review' if resume_receipt else 'Continue repairs from preserved candidate and independent findings' if resume_repair else 'Builder output recovery without re-execution' if resume_builder else 'Evidence-only recovery at unchanged target SHA' if resume_evidence else 'Review format recovery at unchanged target SHA'})
    persist('building' if resumed else 'planning')
    (root/'packet.json').write_text(json.dumps(packet,ensure_ascii=False,indent=2))
    (root/'policy.json').write_text(json.dumps(policy,ensure_ascii=False,indent=2))
@@ -233,7 +206,13 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
    rules='\n'.join('PROJECT RULES '+n+'\n'+(baseline/n).read_text() for n in dict.fromkeys(['AGENTS.md','AGENT.md','Agent.md','agents.md','docs/project/single-developer-workflow.md','docs/project/agent-os-convergence-policy.md',*policy.get('workflow_evidence',{})]) if (baseline/n).is_file())
    dependencies=pathlib.Path(policy['dependencies']) if policy.get('dependencies') else None
    context='Use the existing project environment and exact configured checks; do not install dependencies. Installed host tools and linked project dependencies are available. Read targeted source ranges before implementing. Checks for the verification Agent: '+json.dumps(policy['checks'])+'\n'
-   context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(packet,ensure_ascii=False)+'\nThe current directory is a controller-verified baseline snapshot. Use the selected native harness and project environment. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
+   from delivery_clarification import effective_packet
+   effective=effective_packet(root,packet)
+   if effective!=packet:
+    state['product_clarification']=str(root/'product-clarification.json')
+    context+='Product clarification: '+state['product_clarification']+'; apply its clause replacements; original Packet is preserved. Independently verify that the clarified criteria preserve the intended behavior and evidence.\n'
+   context+='Source commits are created after Builder finishes. SHA-bound runtime evidence must be refreshed at the frozen target in a source-preserving repair; never relabel old evidence.\n'
+   context+='Packet (already scoped by operator; do not expand):\n'+json.dumps(effective,ensure_ascii=False)+'\nThe current directory is a controller-verified baseline snapshot. Use the selected native harness and project environment. No installation, delegation, commits, push, merge or release. Existing project gates remain mandatory.\n'
    plans=[]
    for step in policy['workflow']:
     if not resumed and step['stage'] in ('plan','advisory'):
@@ -254,34 +233,43 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
     if not raw.exists():raw.write_text(artifact.read_text())
     (artifact.parent/'validated-result.json').write_text(json.dumps(saved_result(artifact),ensure_ascii=False))
    feedback=json.dumps([v for v in resumed.get('reviews',{}).values() if v.get('verdict')=='changes_requested'],ensure_ascii=False) if resume_repair else '';buildstep=next(s for s in policy['workflow'] if s['stage']=='build')
+   if resume_evidence:
+    state['builder_run']=evidence_run;receipt(buildstep,evidence_run,evidence_value,state['target_sha'])
    if resume_receipt:receipt(buildstep,state['builder_run'],value,state['target_sha'])
    review_history=dict(resumed.get('reviews',{}) if resumed else {})
    start=resumed['round']+(1 if resume_repair else 0) if resumed else 1
    for roundno in itertools.count(start):
     if policy.get('max_rounds') is not None and roundno>policy['max_rounds']:raise GateError('Round limit reached; Product disposition required')
     state['round']=roundno
+    evidence_only=bool(resume_evidence and roundno==resumed['round'])
     if not resumed or roundno!=resumed['round'] or resume_repair:
      persist('building')
      workspace=snapshot(candidate,git(candidate,'rev-parse','HEAD').decode().strip(),root/f'build-{roundno}')
-     before=tree(workspace)
-     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Write handoff.json result {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect prevents an authorized test-only task, return blocked with evidence. Run only focused tests; a verification Agent runs the configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
+     before=tree(workspace);evidence_before=artifacts_digest(root)
+     rid,build_result=role(buildstep,workspace,context+'Implement only allowed_paths; preserve prior assertions and behavior. Write handoff.json result {"verdict":"approved|blocked","findings":[],"summary":"..."}; approved means ready for independent checks, never approval to merge. If a production defect or contradictory criteria prevent the scoped task, return blocked for Product clarification; never weaken assertions. Evidence-only repairs may leave source unchanged and refresh artifacts at the existing target SHA. Run only focused tests; a verification Agent runs the configured checks; additional roles run only when configured.\nPlans:\n'+'\n'.join(plans)+'\nFindings:\n'+feedback)
      if check_result(build_result)['verdict']=='blocked':raise GateError('Builder blocked: '+build_result)
-     state.pop('pending_builder',None)
      after=tree(workspace);changed={p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)}
-     if not changed:raise GateError('No change inside Packet scope')
+     if not changed:
+      evidence_only=roundno>1 and bool(git(candidate,'diff','--name-only',sha,'HEAD').strip()) and artifacts_digest(root) not in (None,evidence_before)
+      if not evidence_only:raise GateError('No repair progress: no source or evidence change')
+     state.pop('pending_builder',None)
      outside=changed-set(packet['allowed_paths'])
      if outside:raise GateError('Outside Packet scope: '+', '.join(sorted(outside)))
      for name in changed:
       dest=candidate/name;source=workspace/name
       if source.is_file():dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
       elif dest.exists():dest.unlink()
-     git(candidate,'add','--',*sorted(changed));git(candidate,'-c','core.hooksPath=/dev/null','-c','user.name=Agent Control','-c','user.email=agent-control@localhost','commit','-m',packet['title'])
+     if changed:
+      git(candidate,'add','--',*sorted(changed));git(candidate,'-c','core.hooksPath=/dev/null','-c','user.name=Agent Control','-c','user.email=agent-control@localhost','commit','-m',packet['title'])
      target=git(candidate,'rev-parse','HEAD').decode().strip();update_target(state,target);state['builder_run']=rid
      receipt(buildstep,rid,check_result(build_result),target)
     target=state['target_sha']
     target_tree=git(candidate,'rev-parse',target+'^{tree}').decode().strip()
-    if target_tree in state.get('rejected_trees',[]):raise GateError('No repair progress: candidate repeats a recently rejected source tree; inspect findings and repair strategy')
+    if target_tree in state.get('rejected_trees',[]) and not evidence_only:raise GateError('No repair progress: candidate repeats a recently rejected source tree; inspect findings and repair strategy')
+    evidence_key=target_tree+':'+str(artifacts_digest(root))
+    if evidence_key in state.get('rejected_evidence',[]):raise GateError('No repair progress: repeated rejected source and evidence')
     def rejected():
+     state['rejected_evidence']=(state.get('rejected_evidence',[])+[evidence_key])[-8:]
      state['rejected_trees']=(state.get('rejected_trees',[])+[target_tree])[-8:]
     review=snapshot(candidate,target,root/(f'review-{roundno}-resume-'+str(state['review_resume_count']) if resumed else f'review-{roundno}'));persist('checking');checks=[]
     for argv in policy['checks']:
@@ -314,7 +302,7 @@ def execute(packet,policy,job,emit=print,publish=True,resume_review=False,resume
      task_guard(ROOT,job)
      if not policy.get('github_repo'):raise GateError('Publication repository absent')
      remote='git@github.com:'+policy['github_repo']+'.git';git(candidate,'remote','set-url','origin',remote);git(candidate,'push','-u','origin',branch)
-     body=root/'pr-body.md';body.write_text(packet['title']+'\n\n'+ '\n'.join(packet['requirements'])+'\n\nValidation: configured checks, fresh independent review passed; acceptance stage: '+('passed' if any(s['stage']=='acceptance' for s in policy['workflow']) else 'not configured')+'.\nBaseline: '+sha+'\nCandidate: '+target+'\nEvidence: '+str(root)+'\n\nMerge follows the configured project controller policy. No deployment.\n')
+     body=root/'pr-body.md';body.write_text(packet['title']+'\n\n'+ '\n'.join(effective['requirements'])+'\n\nValidation: configured checks, fresh independent review passed; acceptance stage: '+('passed' if any(s['stage']=='acceptance' for s in policy['workflow']) else 'not configured')+'.\nBaseline: '+sha+'\nCandidate: '+target+'\nEvidence: '+str(root)+'\n\nMerge follows the configured project controller policy. No deployment.\n')
      gh=str(pathlib.Path.home()/'.local/bin/gh');args=[gh,'pr','list','--repo',policy['github_repo'],'--head',branch,'--state','all','--json','url'];existing=json.loads(subprocess.check_output(args))
      state['pr_url']=existing[0]['url'] if existing else subprocess.check_output([gh,'pr','create','--repo',policy['github_repo'],'--head',branch,'--base',policy.get('base_branch','main'),'--title',packet['title'],'--body-file',str(body)],text=True).strip()
      persist('waiting_for_merge')

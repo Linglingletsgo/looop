@@ -85,3 +85,10 @@ python3 bin/planning_intervention.py resume-completion PROJECT PLANNING_RUN --ex
 开发任务的 `intent_ids` 只记录调度器选中的已确认需求；延续目标时沿用该目标绑定的来源，自主目标为 `[]`。已确认的产品决定是执行约束，不是需求来源。PM 如误把当前有效的决定填入来源，调度器将其记录在独立 `source-binding.json` 中并剔除，原始提案保留；未知、未确认或其它需求的引用必须在规划结果校验阶段纠正，不能到绑定阶段才报错或自动代换。
 
 旧版因 `No executable confirmed requirement selected` 受阻且尚未绑定的提案，经操作员恢复后可以复用。仅当基线、规划版本、当前目标与选中需求均未变化时复用，重新校验范围、价值、目标契约与来源，再执行项目配置的 Product 范围门禁及完整交付流程；不重新调研，也不重跑已完成开发。
+
+
+Evidence-only repairs keep the candidate commit unchanged when a later Builder round updates external artifacts without changing source. Configured checks and independent reviews still run; unchanged source plus unchanged evidence stops as no progress. Evidence is SHA-bound by the verification/review agents, never relabeled by the controller.
+
+For a stopped legacy no-change failure, use `delivery-control.py resume-evidence <task-id> --reason "..."`. It adopts exactly one preserved approved Builder handoff only when its source matches the clean frozen candidate and the worker is stopped. No Builder replay or new source commit is needed.
+
+Contradictory criteria can be referred to the existing Product Manager with `delivery-control.py clarify <task-id>`. The native harness records clause replacements in a validated handoff and `product-clarification.json`, bound to the immutable original Packet. Only requirements/acceptance wording can change; baseline, paths, policies and project gates remain unchanged. Subsequent agents and PR descriptions read the effective criteria. This clarification is not independent review approval.
