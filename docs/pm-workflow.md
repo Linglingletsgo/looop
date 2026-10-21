@@ -35,3 +35,5 @@ Product Manager 关联 6 个通用 skills：`pm-investigation`、`pm-competitive
 独立对话与调度执行的结构化交接、默认精简 context、历史读取和资源收尾边界见 [项目状态协议](project-state-protocol.md)。角色结果是阶段证据，不是第二份当前状态；独立会话结束不替代审核、验收、合并或资源收尾。
 
 消费级产品的新目标按完整用户旅程选题，保留精简的前后体验契约；关闭时要求当前版本的实际运行走查证据，代理走查与真实用户测试分开标注。UX/UI 仍为按需角色，现有目标不追改。详见 [消费级体验目标](consumer-experience-goals.md)。
+
+Research plan optional skill_reason/fallback_reason values may be absent or null; the controller omits null values from effective context. Missing-skill and project-method gap explanations remain mandatory when applicable. Type errors name the field separately from the 2000-character limit. After an explicit retry of the legacy explanation compatibility failure, a same-contract checkpoint may reuse the latest identity-validated research-plan handoff; the plan is revalidated against current skills and permissions before continuing research. Original handoffs remain unchanged.

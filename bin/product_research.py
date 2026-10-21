@@ -102,22 +102,13 @@ def perform(run,repo,folder,role_prompt,context,fresh,execution_route,adapter=No
  available=catalog(repo,adapter)
  # Descriptions only in selection; full reviewed bytes are loaded for the chosen methods.
  phase='RESEARCH PLAN ONLY. Project role describes the wider workflow; this call selects a discovery question and methods, not a task Packet. '
- selection='\nClassify kind as new_requirement (new product opportunity), existing_defect (specific current behavior violates an existing contract), or backlog_validation. Existing defects need verified source plus an Agent-executed synthetic reproduction before planning; self-labeling does not grant permission. '+ '\nBefore proposing any feature, choose ONE concrete discovery question and a stopping condition. Prefer relevant project PM skills. Default looop: methods fill only gaps: when project skills exist, give fallback_reason naming the missing method. Never replace a required project skill. Select only methods relevant to this decision, not the whole catalog. Explain unavailable/inapplicable skills explicitly. Project authority and data boundaries override skills. Write handoff.json result {"kind":"new_requirement|existing_defect|backlog_validation","question":"...","stop_condition":"...","skills":["path/SKILL.md"],"skill_reason":"...","fallback_reason":"only if defaults fill a project gap"}.\nCatalog: '+json.dumps([{k:v for k,v in item.items() if k in ('path','description','origin')} for item in available],ensure_ascii=False)
- def validate_plan(plan):
-  if not isinstance(plan,dict):raise ValueError('Research plan must be a JSON object')
-  for field in ('question','stop_condition'):
-   if not isinstance(plan.get(field),str) or not plan[field].strip() or len(plan[field])>2000:raise ValueError('Research needs a bounded discovery question and stopping condition')
-  if plan.get('kind', 'new_requirement' if public_required else 'backlog_validation') not in KINDS:raise ValueError('Invalid research kind')
-  if public_required and plan.get('kind')=='backlog_validation':raise ValueError('No selected backlog or requirement; choose new_requirement or existing_defect')
-  load_skills(repo,plan,available)
-  for key in ('skill_reason','fallback_reason'):
-   if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
- plan=invoke(run,repo,folder/'research-plan',phase+'\n'+role_prompt+'\n'+context+'\n'+selection,fresh,validate=validate_plan,role='readonly',execution_route=execution_route,dependencies=dependencies)
+ selection='\nClassify kind as new_requirement (new product opportunity), existing_defect (specific current behavior violates an existing contract), or backlog_validation. Existing defects need verified source plus an Agent-executed synthetic reproduction before planning; self-labeling does not grant permission. '+ '\nBefore proposing any feature, choose ONE concrete discovery question and a stopping condition. Prefer relevant project PM skills. Default looop: methods fill only gaps: when project skills exist, give fallback_reason naming the missing method. Never replace a required project skill. Select only methods relevant to this decision, not the whole catalog. Explain unavailable/inapplicable skills explicitly. Optional skill_reason/fallback_reason may be omitted or null when inapplicable; required skill-gap explanations must be nonempty strings. Keep each explanation within 2000 characters. Project authority and data boundaries override skills. Write handoff.json result {"kind":"new_requirement|existing_defect|backlog_validation","question":"...","stop_condition":"...","skills":["path/SKILL.md"],"skill_reason":"...","fallback_reason":"only if defaults fill a project gap"}.\nCatalog: '+json.dumps([{k:v for k,v in item.items() if k in ('path','description','origin')} for item in available],ensure_ascii=False)
+ from research_plan import normalize as normalize_plan,restore as restore_plan
+ plan=restore_plan(checkpoint,folder,repo,available,public_required,fresh)
+ if plan is None:
+  plan=invoke(run,repo,folder/'research-plan',phase+'\\n'+role_prompt+'\\n'+context+'\\n'+selection,fresh,validate=lambda v:normalize_plan(v,repo,available,public_required),role='readonly',execution_route=execution_route,dependencies=dependencies)
+ plan=normalize_plan(plan,repo,available,public_required)
  skills=load_skills(repo,plan,available)
- plan={k:v for k,v in plan.items() if k in ('kind','question','stop_condition','skills','skill_reason','fallback_reason')}
- plan.setdefault('kind','new_requirement' if public_required else 'backlog_validation')
- for key in ('skill_reason','fallback_reason'):
-  if key in plan and (not isinstance(plan[key],str) or len(plan[key])>2000):raise ValueError('Research plan explanation must be concise')
  plan['skills']=[s['path'] for s in skills]
  prompt=role_prompt+'\n'+context+'\nResearch plan: '+json.dumps({k:plan[k] for k in ('kind','question','stop_condition')},ensure_ascii=False)+'\nActually loaded skills, use their methods without expanding permissions:\n'+'\n'.join(s['path']+'\n'+s['content'] for s in skills)
  prompt+='\nConduct the research using real tools and permitted sources. Distinguish facts, inference and unknowns. Do not invent interviews, analytics, experiments or citations. No outreach, private data, payment or production access. '+('New product requirements need public research; existing defects need current source contracts and Agent-executed reproduction. ' if public_required else 'Validate the backlog/confirmed requirement against repository evidence; public research only when needed and permitted. ')
