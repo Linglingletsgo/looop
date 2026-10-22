@@ -5,35 +5,97 @@ import product_research as research
 import autonomy,loop_control
 from project_state import Store
 import test_autonomy as fixtures
+from looop_support import setUpModule  # noqa: F401
 
 class DefaultMethods(unittest.TestCase):
  def setUp(self):self.tmp=tempfile.TemporaryDirectory();self.repo=pathlib.Path(self.tmp.name)
  def tearDown(self):self.tmp.cleanup()
- def test_project_methods_win_and_defaults_require_specific_gap(self):
-  p=self.repo/'.agents/skills/pm/SKILL.md';p.parent.mkdir(parents=True);p.write_text('Project mandatory discovery method')
-  available=research.catalog(self.repo)
-  selected=research.load_skills(self.repo,{'skills':['.agents/skills/pm/SKILL.md']},available)
-  self.assertEqual([s['origin'] for s in selected],['project'])
-  with self.assertRaisesRegex(ValueError,'explicit gap'):research.load_skills(self.repo,{'skills':['looop:competitive-research']},available)
-  selected=research.load_skills(self.repo,{'skills':['looop:competitive-research'],'fallback_reason':'Project method lacks public competitor comparison'},available)
+ def opt_in(self,value=True):
+  settings=self.repo/'data';settings.mkdir(exist_ok=True)
+  (settings/'local-settings.json').write_text(json.dumps({'pm_skills':{'noncommercial':value}}))
+  return patch.object(research,'ROOT',self.repo)
+ def test_noncommercial_pack_is_disabled_without_local_opt_in(self):
+  with patch.object(research,'ROOT',self.repo):
+   available=research.catalog(self.repo)
+   result=research.load_skills(self.repo,{'skills':[],'skill_reason':'No project skill exists'},available)
+  self.assertNotIn('looop:investigation',[s['path'] for s in available]);self.assertNotIn('looop:competitive-research',[s['path'] for s in available])
+  self.assertEqual(result[0]['path'],'looop:research-core');self.assertEqual(result[0]['license'],'MIT');self.assertIsNone(result[0]['upstream'])
+ def test_opt_in_enables_noncommercial_pack_and_original_base_method(self):
+  with self.opt_in():
+   available=research.catalog(self.repo)
+   selected=research.load_skills(self.repo,{'skills':['looop:competitive-research'],'fallback_reason':'Project method lacks public competitor comparison'},available)
+   result=research.load_skills(self.repo,{'skills':[],'skill_reason':'No project skill exists'},available)
   self.assertEqual([s['path'] for s in selected],['looop:investigation','looop:competitive-research'])
- def test_no_project_methods_loads_reviewed_protocol_even_when_model_skips(self):
-  result=research.load_skills(self.repo,{'skills':[],'skill_reason':'No project skill exists'},research.catalog(self.repo))
   self.assertEqual(result[0]['path'],'looop:investigation');self.assertEqual(result[0]['license'],'CC-BY-NC-SA-4.0')
   self.assertIn('cfcb697',result[0]['upstream']['commit'])
+ def test_explicit_base_method_survives_after_opt_in(self):
+  with self.opt_in():
+   available=research.catalog(self.repo)
+   kept=research.load_skills(self.repo,{'skills':['looop:research-core']},available)
+   inherited=research.load_skills(self.repo,{'skills':['looop:investigation']},available)
+   configured=research.load_skills(self.repo,{'skills':[],'skill_reason':'No project skill exists'},available)
+   inserted=research.load_skills(self.repo,{'skills':['looop:backlog-prioritization'],'fallback_reason':'No project prioritization method'},available)
+  self.assertEqual([s['path'] for s in kept],['looop:research-core']);self.assertEqual(kept[0]['license'],'MIT')
+  self.assertEqual([s['path'] for s in inherited],['looop:investigation'])
+  self.assertEqual([s['path'] for s in configured],['looop:investigation'])
+  self.assertEqual([s['path'] for s in inserted],['looop:investigation','looop:backlog-prioritization'])
+ def test_explicit_research_core_without_opt_in_is_not_swapped(self):
+  with patch.object(research,'ROOT',self.repo):
+   available=research.catalog(self.repo)
+   kept=research.load_skills(self.repo,{'skills':['looop:research-core']},available)
+   configured=research.load_skills(self.repo,{'skills':[],'skill_reason':'No project skill exists'},available)
+  self.assertEqual([s['path'] for s in kept],['looop:research-core']);self.assertEqual([s['path'] for s in configured],['looop:research-core'])
+ def test_two_base_methods_are_never_loaded_together(self):
+  with self.opt_in(),self.assertRaisesRegex(ValueError,'at most one base method'):
+   research.load_skills(self.repo,{'skills':['looop:research-core','looop:investigation']},research.catalog(self.repo))
+ def test_missing_or_false_setting_keeps_pack_disabled(self):
+  with patch.object(research,'ROOT',self.repo):self.assertFalse(research.noncommercial_enabled())
+  with self.opt_in(False):self.assertFalse(research.noncommercial_enabled())
+  with self.opt_in(True):self.assertTrue(research.noncommercial_enabled())
+  (self.repo/'data/local-settings.json').write_text('{not json')
+  with patch.object(research,'ROOT',self.repo):self.assertFalse(research.noncommercial_enabled())
+ def test_project_methods_win_and_defaults_require_specific_gap(self):
+  p=self.repo/'.agents/skills/pm/SKILL.md';p.parent.mkdir(parents=True);p.write_text('Project mandatory discovery method')
+  with self.opt_in():
+   available=research.catalog(self.repo)
+   selected=research.load_skills(self.repo,{'skills':['.agents/skills/pm/SKILL.md']},available)
+   self.assertEqual([s['origin'] for s in selected],['project'])
+   with self.assertRaisesRegex(ValueError,'explicit gap'):research.load_skills(self.repo,{'skills':['looop:competitive-research']},available)
+   selected=research.load_skills(self.repo,{'skills':['looop:competitive-research'],'fallback_reason':'Project method lacks public competitor comparison'},available)
+  self.assertEqual([s['path'] for s in selected],['looop:investigation','looop:competitive-research'])
+ def test_disabled_pack_never_loads_reviewed_noncommercial_protocol(self):
+  with patch.object(research,'ROOT',self.repo):
+   available=research.catalog(self.repo)
+   result=research.load_skills(self.repo,{'skills':['looop:backlog-prioritization'],'fallback_reason':'No project prioritization method'},available)
+   with self.assertRaisesRegex(ValueError,'existing catalog'):research.load_skills(self.repo,{'skills':['looop:investigation']},available)
+  self.assertEqual([s['path'] for s in result],['looop:research-core','looop:backlog-prioritization'])
  def test_modified_default_bytes_are_rejected(self):
   folder=self.repo/'defaults';folder.mkdir();source=research.DEFAULT_ROOT
   import shutil
   shutil.copytree(source,folder,dirs_exist_ok=True)
-  (folder/'investigation/SKILL.md').write_text('Unreviewed replacement')
+  (folder/'research-core/SKILL.md').write_text('Unreviewed replacement')
   with patch.object(research,'DEFAULT_ROOT',folder):
    with self.assertRaisesRegex(ValueError,'reviewed manifest'):research.default_catalog()
- def test_originals_and_licenses_match_pinned_manifest(self):
+ def test_originals_licenses_and_hashes_match_pinned_manifest(self):
   import hashlib
-  for item in json.loads((research.DEFAULT_ROOT/'manifest.json').read_text())['skills']:
+  manifest=json.loads((research.DEFAULT_ROOT/'manifest.json').read_text())
+  self.assertEqual(len(manifest['skills']),7)
+  for item in manifest['skills']:
+   digest=hashlib.sha256((research.DEFAULT_ROOT/item['path']).read_bytes()).hexdigest()
+   self.assertEqual(digest,item['sha256'],item['id'])
+   if item['upstream'] is None:
+    self.assertEqual(item['license'],'MIT');self.assertEqual(item['pack'],'default')
+    continue
    owner=item['upstream']['repo'].split('/')[0];original=research.DEFAULT_ROOT/'upstream'/owner/item['upstream']['path']
    self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),item['upstream']['sha256'])
-   self.assertTrue((research.DEFAULT_ROOT/'upstream'/owner/'LICENSE').is_file())
+  self.assertTrue((research.DEFAULT_ROOT/'upstream'/owner/'LICENSE').is_file())
+  self.assertEqual({i['id'] for i in manifest['skills'] if i['pack']=='noncommercial'},{'looop:investigation','looop:competitive-research'})
+ def test_mit_skills_declare_configured_base_placeholder(self):
+  manifest=json.loads((research.DEFAULT_ROOT/'manifest.json').read_text())
+  for item in manifest['skills']:
+   if item['pack']!='default' or item['id']=='looop:research-core':continue
+   self.assertEqual(item['dependencies'],['looop:base'],item['id'])
+  self.assertEqual(next(i for i in manifest['skills'] if i['id']=='looop:competitive-research')['dependencies'],['looop:investigation'])
  def test_network_gap_does_not_become_feature_or_controller_failure(self):
   report={'status':'supported','question':'Does the public source support the need?','finding':'Provisional finding','counterevidence':'User demand not established','recommendation':'Wait if unverifiable','sources':[{'kind':'public','url':'https://example.com/research','quote':'This is an exact quote that needs independent checking.'}]}
   with patch.object(research,'fetch',side_effect=TimeoutError('unavailable')):
@@ -41,15 +103,16 @@ class DefaultMethods(unittest.TestCase):
   self.assertEqual(value['status'],'insufficient_evidence');self.assertNotIn('unavailable',json.dumps(value))
  def test_default_protocol_and_usage_actually_enter_model_call(self):
   (self.repo/'spec.md').write_text('The existing export omits the date needed for comparison.')
-  responses=[{'question':'Is the existing date export incomplete?','stop_condition':'Read current export and specification','skills':['looop:backlog-prioritization']}, {'status':'supported','question':'Is the existing date export incomplete?','finding':'Specification shows a gap','counterevidence':'No live user study','recommendation':'Continue existing authorized backlog','skill_usage':[{'path':p,'impact':'Used method to validate the selected backlog problem'} for p in ['looop:investigation','looop:backlog-prioritization']],'sources':[{'kind':'repository','path':'spec.md','quote':'The existing export omits the date needed for comparison.'}]}]
+  responses=[{'question':'Is the existing date export incomplete?','stop_condition':'Read current export and specification','skills':['looop:backlog-prioritization']}, {'status':'supported','question':'Is the existing date export incomplete?','finding':'Specification shows a gap','counterevidence':'No live user study','recommendation':'Continue existing authorized backlog','skill_usage':[{'path':p,'impact':'Used method to validate the selected backlog problem'} for p in ['looop:research-core','looop:backlog-prioritization']],'sources':[{'kind':'repository','path':'spec.md','quote':'The existing export omits the date needed for comparison.'}]}]
   prompts=[]
   def run(*args,**kwargs):prompts.append(args[2]);return json.dumps(responses.pop(0))
-  value=research.perform(run,self.repo,self.repo/'run','PM','Backlog only',lambda:None,{'harness':'codex','provider':'codex'})
-  self.assertEqual(prompts[0].count('Catalog: '),1);self.assertEqual(len(value['loaded_skills']),2);self.assertIn('Source count is not a proof threshold',prompts[1]);self.assertNotIn('Content not loaded',prompts[1]);self.assertNotIn('content',value['loaded_skills'][0])
+  with patch.object(research,'ROOT',self.repo):
+   value=research.perform(run,self.repo,self.repo/'run','PM','Backlog only',lambda:None,{'harness':'codex','provider':'codex'})
+  self.assertEqual(prompts[0].count('Catalog: '),1);self.assertEqual(len(value['loaded_skills']),2);self.assertIn('Every factual claim carries its own attributable source',prompts[1]);self.assertNotIn('Content not loaded',prompts[1]);self.assertNotIn('content',value['loaded_skills'][0]);self.assertEqual(value['loaded_skills'][0]['path'],'looop:research-core');self.assertEqual(value['loaded_skills'][0]['license'],'MIT')
 
  def test_wrong_phase_packet_is_corrected_before_any_research(self):
   calls=[]
-  responses=[{'status':'proposal','packet':{'title':'Wrong phase'}},{'question':'Is export evidence sufficient?','stop_condition':'Read specification and stop','skills':['looop:investigation']},{'status':'insufficient_evidence','question':'Is export evidence sufficient?','finding':'No specification exists','counterevidence':'No factual basis','recommendation':'Wait for evidence','next_step':{'kind':'human_decision','detail':'Provide the missing product specification'},'skill_usage':[{'path':'looop:investigation','impact':'Identified missing evidence instead of guessing'}]}]
+  responses=[{'status':'proposal','packet':{'title':'Wrong phase'}},{'question':'Is export evidence sufficient?','stop_condition':'Read specification and stop','skills':['looop:research-core']},{'status':'insufficient_evidence','question':'Is export evidence sufficient?','finding':'No specification exists','counterevidence':'No factual basis','recommendation':'Wait for evidence','next_step':{'kind':'human_decision','detail':'Provide the missing product specification'},'skill_usage':[{'path':'looop:research-core','impact':'Identified missing evidence instead of guessing'}]}]
   def run(*args,**kwargs):calls.append(args);return json.dumps(responses.pop(0))
   value=research.perform(run,self.repo,self.repo/'run','PM proposes tasks','Current state',lambda:None,{'harness':'codex','provider':'codex'})
   self.assertEqual(value['status'],'insufficient_evidence');self.assertEqual(len(calls),3)
@@ -59,8 +122,8 @@ class DefaultMethods(unittest.TestCase):
  def test_citation_path_format_and_evidence_correction_remain_separate(self):
   quote='Confirmed export must contain the record date.'
   (self.repo/'spec.md').write_text(quote)
-  plan={'question':'Does export preserve dates?','stop_condition':'Check spec','skills':['looop:investigation']}
-  report={'status':'supported','question':plan['question'],'finding':'A date is required','counterevidence':'No user study','recommendation':'Continue scoped requirement','skill_usage':[{'path':'looop:investigation','impact':'Compared implementation to specification'}],'sources':[{'kind':'repository','path':'spec.md:1','quote':quote}]}
+  plan={'question':'Does export preserve dates?','stop_condition':'Check spec','skills':['looop:research-core']}
+  report={'status':'supported','question':plan['question'],'finding':'A date is required','counterevidence':'No user study','recommendation':'Continue scoped requirement','skill_usage':[{'path':'looop:research-core','impact':'Compared implementation to specification'}],'sources':[{'kind':'repository','path':'spec.md:1','quote':quote}]}
   repaired=copy.deepcopy(report);repaired['sources'][0]['path']='spec.md'
   calls=[];responses=[plan,report,repaired]
   def run(*a,**k):calls.append(a);return json.dumps(responses.pop(0))

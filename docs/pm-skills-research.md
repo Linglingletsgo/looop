@@ -12,7 +12,7 @@
 
 | 库 | 实际审核内容 | 适配价值 | 需要修改的部分 | 推荐定位 |
 |---|---|---|---|---|
-| [deanpeters/Product-Manager-Skills](https://github.com/deanpeters/Product-Manager-Skills) | autonomous-investigation、competitive-research-snapshot、discovery-process | 区分交互工作坊与可调度调研；事实/推断/假设标签、真实引用、稳定结构、缺口说明 | 去除固定四选项结尾；不把缺失回答视为执行授权；不照搬来源数量阈值；完整 discovery 含招募、访谈和数周日程，不适合默认后台执行 | **个人使用的自主调研协议首选** |
+| [deanpeters/Product-Manager-Skills](https://github.com/deanpeters/Product-Manager-Skills) | autonomous-investigation、competitive-research-snapshot、discovery-process | 区分交互工作坊与可调度调研；事实/推断/假设标签、真实引用、稳定结构、缺口说明 | 去除固定四选项结尾；不把缺失回答视为执行授权；不照搬来源数量阈值；完整 discovery 含招募、访谈和数周日程，不适合默认后台执行 | **需显式开启的非商业调研协议**（默认改用原创 MIT `research-core`） |
 | [phuryn/pm-skills](https://github.com/phuryn/pm-skills) | opportunity-solution-tree、competitor-analysis、prioritize-features、create-prd | 模块小；从用户问题到方案、排序和精简 PRD，覆盖完整 | 固定 5 个竞品、top 5、3+ 方案应按决策需要调整；PRD 的先问后写规则要区分后台与人工入口；不虚构 RICE 数值 | **需求定义和具体方法的主力补充** |
 | [Uxcel-Lab/product-skills](https://github.com/Uxcel-Lab/product-skills) | discovery、assumption-testing、decision-quality | 明确按风险和可逆性选择研究深度；先检验关键假设，避免为小改动跑完整研究 | 正文较长；默认串联审计、固定节奏、招募等要求不能继承为调度权限 | **高不确定需求的假设检验补充** |
 | [rampstackco/claude-skills](https://github.com/rampstackco/claude-skills) | ux-research、discovery-research-synthesis | 研究问题、原始观察→模式→决策的证据链；明确缺数据时交付缺口，禁止补造 | 访谈、付费招募、视频和多文档输出不宜默认；synthesis 技能长，需按需读取 | **已有访谈、支持工单等资料时启用** |
@@ -31,8 +31,8 @@
 
 ### 最小默认组合
 
-- **调研协议**：deanpeters `autonomous-investigation`。每次先明确一个待决策问题、允许来源和停止条件；输出事实、推断、假设、未知。
-- **公开竞品证据**：需要外部比较时加载 `competitive-research-snapshot`，同时包含其必要协议依赖。竞品营销声明只证明其宣传内容，不能证明实际体验或用户需求。
+- **调研协议**：默认 looop 原创 MIT `research-core`；开启非商业包后改用 deanpeters `autonomous-investigation` 的适配版。每次先明确一个待决策问题、允许来源和停止条件；输出事实、推断、假设、未知。
+- **公开竞品证据**（仅非商业包开启时）：需要外部比较时加载 `competitive-research-snapshot`，同时包含其必要协议依赖。竞品营销声明只证明其宣传内容，不能证明实际体验或用户需求。
 - **用户问题→产品目标**：phuryn `opportunity-solution-tree`，不强制固定树宽或机会评分；缺少重要性/满意度数据时保留未知。
 - **现有 backlog 排序**：phuryn `prioritize-features`，只比较现有范围，不凭空填入触达量或影响数字。
 - **需求简报**：phuryn `create-prd` 的问题、用户、前后变化、成功条件和非目标；映射到当前项目状态，不默认产生不断增加的 PRD 文件。
@@ -84,4 +84,4 @@
 | RampStack | [482c9bf74697fc1e311bd4dca5ce301f046c4b76](https://github.com/rampstackco/claude-skills/tree/482c9bf74697fc1e311bd4dca5ce301f046c4b76) | MIT |
 | Alireza | [19392f7a08264ed00486a251f5b2098321771f94](https://github.com/alirezarezvani/claude-skills/tree/19392f7a08264ed00486a251f5b2098321771f94) | MIT |
 
-后续实现：已在 looop 的 pm-skills/ 建立 6 项精简适配方法，保留固定版本上游原文和许可证。项目优先选择、来源独立核验、当前研究状态和多切片目标流程已接入；具体验证以 docs/pm-workflow.md 为准。真实产品调研效果尚未作跨项目评测。
+后续实现：已在 looop 的 pm-skills/ 建立 6 项精简适配方法并新增原创 MIT 方法 `research-core`，保留固定版本上游原文和许可证。仓库以 MIT 分发；deanpeters 的 `investigation` 与 `competitive-research` 仍为 CC BY-NC-SA 4.0，移入需显式开启的 `noncommercial/` 包，未开启时以 `research-core` 作为默认调研协议。项目优先选择、来源独立核验、当前研究状态和多切片目标流程已接入；具体验证以 docs/pm-workflow.md 为准。真实产品调研效果尚未作跨项目评测。

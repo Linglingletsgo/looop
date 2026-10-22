@@ -6,6 +6,7 @@ from product_goals import proposal,summary,completion_coverage
 from source_evidence import verify_completion
 import product_research as research
 import loop_control
+from looop_support import setUpModule  # noqa: F401
 
 GOAL={'title':'比较机会时能核对日期和费用的来源','user_value':'用户可以可靠比较机会，避免按错配日期和费用行动。','success_criteria':['日期费用关联到同一机会的可追溯来源','比较页面展示缺失证据状态'],'remaining':['来源关联','比较页面与异常提示'],'progress':'已确认现有产品缺口，尚未开发','slice_value':'先保留结构化来源，为比较界面提供可靠输入'}
 

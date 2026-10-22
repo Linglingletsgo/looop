@@ -3,12 +3,13 @@ from unittest.mock import Mock,patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import product_research as research
 import research_experiment as probes
+from looop_support import setUpModule  # noqa: F401
 
 class Evidence(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=pathlib.Path(self.temp.name);self.repo=self.root/'repo';self.repo.mkdir();(self.repo/'spec.py').write_text('VALUE=7\n')
-  self.plan={'kind':'existing_defect','question':'Does output violate current contract?','stop_condition':'Observe real behavior','skills':['looop:investigation']}
-  self.report={'status':'supported','question':self.plan['question'],'finding':'PM verified actual behavior','counterevidence':'Synthetic evidence only','recommendation':'Define minimal fix','sources':[{'kind':'repository','path':'spec.py','quote':'VALUE=7'}],'skill_usage':[{'path':'looop:investigation','impact':'Compared actual observations'}]}
+  self.plan={'kind':'existing_defect','question':'Does output violate current contract?','stop_condition':'Observe real behavior','skills':['looop:research-core']}
+  self.report={'status':'supported','question':self.plan['question'],'finding':'PM verified actual behavior','counterevidence':'Synthetic evidence only','recommendation':'Define minimal fix','sources':[{'kind':'repository','path':'spec.py','quote':'VALUE=7'}],'skill_usage':[{'path':'looop:research-core','impact':'Compared actual observations'}]}
  def test_pm_owns_research_conclusion_scheduler_checks_structure(self):
   run=Mock(side_effect=[json.dumps(self.plan),json.dumps(self.report)])
   with patch.object(research,'fetch',side_effect=AssertionError('Scheduler must not research')):

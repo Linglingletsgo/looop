@@ -3,6 +3,7 @@ from unittest.mock import Mock,patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import research_experiment as experiment
 import product_research as research
+from looop_support import setUpModule  # noqa: F401
 
 class Experiments(unittest.TestCase):
  def setUp(self):
@@ -28,8 +29,8 @@ class Experiments(unittest.TestCase):
   with patch('sandbox.run',return_value=json.dumps({'output':'pass'})) as run,self.assertRaises(ValueError):experiment.execute(self.repo,self.root/'experiment-1',self.probe,None,Mock())
   self.assertEqual(run.call_count,3)
  def test_research_request_dispatches_verifier_and_returns_to_pm(self):
-  plan={'question':'Does value equal seven?','stop_condition':'Execute synthetic probe','skills':['looop:investigation']}
-  gap={'status':'insufficient_evidence','question':plan['question'],'finding':'Need runtime result','counterevidence':'Not observed','recommendation':'Run probe','next_step':{'kind':'experiment','detail':'Execute actual code','experiment':self.probe},'skill_usage':[{'path':'looop:investigation','impact':'Tested implementation'}]}
+  plan={'question':'Does value equal seven?','stop_condition':'Execute synthetic probe','skills':['looop:research-core']}
+  gap={'status':'insufficient_evidence','question':plan['question'],'finding':'Need runtime result','counterevidence':'Not observed','recommendation':'Run probe','next_step':{'kind':'experiment','detail':'Execute actual code','experiment':self.probe},'skill_usage':[{'path':'looop:research-core','impact':'Tested implementation'}]}
   rejected={**gap,'status':'rejected'};rejected.pop('next_step');run=Mock(side_effect=[json.dumps(v) for v in (plan,gap,rejected)])
   with patch('sandbox.run',return_value=json.dumps(self.value)) as verifier:
    result=research.perform(run,self.repo,self.root/'research','PM','State',Mock(),{'harness':'codex','provider':'codex'})
@@ -52,8 +53,8 @@ class Experiments(unittest.TestCase):
    experiment.validate({'purpose':'Observe','runtime':'shell'})
 
  def test_supported_with_outstanding_experiment_requires_evidence_correction(self):
-  plan={'question':'Does value equal seven?','stop_condition':'Observe','skills':['looop:investigation']}
-  report={'status':'supported','question':'Does value equal seven?','finding':'Source suggests seven','counterevidence':'Runtime not observed','recommendation':'Probe','next_step':{'kind':'experiment','detail':'Observe actual value'},'skill_usage':[{'path':'looop:investigation','impact':'Identify gap'}]}
+  plan={'question':'Does value equal seven?','stop_condition':'Observe','skills':['looop:research-core']}
+  report={'status':'supported','question':'Does value equal seven?','finding':'Source suggests seven','counterevidence':'Runtime not observed','recommendation':'Probe','next_step':{'kind':'experiment','detail':'Observe actual value'},'skill_usage':[{'path':'looop:research-core','impact':'Identify gap'}]}
   gap={**report,'status':'insufficient_evidence'}
   done={**report,'status':'rejected'};done.pop('next_step')
   run=Mock(side_effect=[json.dumps(v) for v in (plan,report,gap,done)])

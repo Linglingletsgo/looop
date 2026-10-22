@@ -5,6 +5,7 @@ import test_research_continuation as continuation
 from research_plan import normalize,restore
 import product_research as research
 from handoff import prepare
+from looop_support import setUpModule  # noqa: F401
 
 class ResearchPlan(unittest.TestCase):
  def test_optional_null_missing_and_text_are_equivalent(self):

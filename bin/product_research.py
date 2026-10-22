@@ -2,20 +2,27 @@
 import datetime,hashlib,html,json,pathlib,re,urllib.request,urllib.parse
 from project_adapter import safe_file
 from planning_runtime import invoke
-from runtime import CODE_ROOT
+from runtime import CODE_ROOT,ROOT
 from lifecycle import save
 from research_evidence import KINDS,EvidenceGap,basis
+import pm_packs as P
+from pm_packs import NONCOMMERCIAL_PACK
 
 class ResearchIncomplete(ValueError):pass
 
 class CitationMismatch(ValueError):pass
 
 DEFAULT_ROOT=CODE_ROOT/'pm-skills'
+def noncommercial_enabled():return P.noncommercial_enabled(ROOT)
+def base_skill():return P.base_skill(noncommercial_enabled())
+
 
 def default_catalog():
+ enabled=noncommercial_enabled()
  manifest=json.loads((DEFAULT_ROOT/'manifest.json').read_text())
  result=[]
  for item in manifest['skills']:
+  if item.get('pack')==NONCOMMERCIAL_PACK and not enabled:continue
   content=safe_file(DEFAULT_ROOT,item['path']).read_bytes()
   if hashlib.sha256(content).hexdigest()!=item['sha256']:raise ValueError('Default PM skill differs from reviewed manifest: '+item['id'])
   result.append({'path':item['id'],'description':item['description'],'origin':'default','file':item['path'],'sha256':item['sha256'],'upstream':item['upstream'],'license':item['license']})
@@ -38,9 +45,7 @@ def load_skills(repo,plan,available):
  if not selected and (not isinstance(plan.get('skill_reason'),str) or not plan['skill_reason'].strip()):raise ValueError('Explain missing or inapplicable research skills')
  defaults=any(known[p].get('origin')=='default' for p in selected)
  if defaults and any(v.get('origin')=='project' for v in available) and (not isinstance(plan.get('fallback_reason'),str) or not plan['fallback_reason'].strip()):raise ValueError('Default methods need an explicit gap in project skills')
- selected=list(selected)
- if defaults and 'looop:investigation' not in selected:selected.insert(0,'looop:investigation')
- if not selected and not any(v.get('origin')=='project' for v in available) and 'looop:investigation' in known:selected=['looop:investigation']
+ selected=P.with_base(selected,known,defaults,any(v.get('origin')=='project' for v in available),base_skill())
  result=[]
  for name in selected:
   item=known[name];default=item.get('origin')=='default'

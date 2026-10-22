@@ -2,12 +2,13 @@ import copy,json,pathlib,sys,tempfile,unittest
 from unittest.mock import Mock
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import product_research as research
+from looop_support import setUpModule  # noqa: F401
 class ResearchContinuation(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.repo=pathlib.Path(self.temp.name)
   (self.repo/'spec.md').write_text('Confirmed product evidence requires reliable source attribution.')
-  self.plan={'question':'Does attribution exist?','stop_condition':'Read source and specification','skills':['looop:investigation']}
-  self.gap={'status':'insufficient_evidence','question':self.plan['question'],'finding':'Need to read implementation','counterevidence':'No confirmed defect','recommendation':'Read spec.md before deciding','next_step':{'kind':'investigate','detail':'Read spec.md'},'skill_usage':[{'path':'looop:investigation','impact':'Identified exact missing source'}],'sources':[]}
+  self.plan={'question':'Does attribution exist?','stop_condition':'Read source and specification','skills':['looop:research-core']}
+  self.gap={'status':'insufficient_evidence','question':self.plan['question'],'finding':'Need to read implementation','counterevidence':'No confirmed defect','recommendation':'Read spec.md before deciding','next_step':{'kind':'investigate','detail':'Read spec.md'},'skill_usage':[{'path':'looop:research-core','impact':'Identified exact missing source'}],'sources':[]}
   self.supported={**self.gap,'status':'supported','finding':'Specification confirms requirement','sources':[{'kind':'repository','path':'spec.md','quote':'Confirmed product evidence requires reliable source attribution.'}]}
  def perform(self,responses,fresh=None):
   self.run=Mock(side_effect=[json.dumps(v) for v in responses]);self.fresh=fresh or Mock()

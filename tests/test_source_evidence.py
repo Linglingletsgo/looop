@@ -4,6 +4,7 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 from source_evidence import quote,SourceEvidenceError
 from planning_runtime import invoke
 import product_research as research
+from looop_support import setUpModule  # noqa: F401
 
 class Quotes(unittest.TestCase):
  def setUp(self):

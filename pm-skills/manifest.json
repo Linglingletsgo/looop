@@ -1,10 +1,25 @@
 {
   "version": 1,
-  "purpose": "Personal noncommercial use; project methods take precedence",
+  "purpose": "Repo MIT methods plus an opt-in noncommercial pack; project methods take precedence",
+  "packs": {
+    "default": "MIT, always available",
+    "noncommercial": "CC BY-NC-SA 4.0, opt-in via data/local-settings.json"
+  },
   "skills": [
     {
+      "id": "looop:research-core",
+      "path": "research-core/SKILL.md",
+      "pack": "default",
+      "description": "Answer one decision-relevant question with attributable current evidence, then stop.",
+      "sha256": "fe2a80c63f3c3bb67280ecd64f8c64152236241c959930e9b7e004efe4837cd5",
+      "license": "MIT",
+      "upstream": null,
+      "dependencies": []
+    },
+    {
       "id": "looop:investigation",
-      "path": "investigation/SKILL.md",
+      "path": "noncommercial/investigation/SKILL.md",
+      "pack": "noncommercial",
       "description": "Define a decision-relevant research question and investigate with attributable evidence.",
       "sha256": "1ca3d5bb1818914938fdd0bc23ab1189cbf54860bf8b894735524a3025a1bd8e",
       "license": "CC-BY-NC-SA-4.0",
@@ -19,7 +34,8 @@
     },
     {
       "id": "looop:competitive-research",
-      "path": "competitive-research/SKILL.md",
+      "path": "noncommercial/competitive-research/SKILL.md",
+      "pack": "noncommercial",
       "description": "Compare relevant alternatives using current public evidence, not invented feature lists.",
       "sha256": "5abd1b9a3133b8c717e6ade34d66871bbbe1d46c0cce3ce574fcbed2ea6b1edc",
       "license": "CC-BY-NC-SA-4.0",
@@ -37,6 +53,7 @@
     {
       "id": "looop:opportunities",
       "path": "opportunities/SKILL.md",
+      "pack": "default",
       "description": "Connect one meaningful user outcome to evidenced problems and possible solutions.",
       "sha256": "99b339a9a0a4c2463fa77adb7ea2e227392cc331f4d9501f960630337177e368",
       "license": "MIT",
@@ -48,12 +65,13 @@
         "sha256": "6b23e44a5ace86aa20d64cc130322265ace6a53a29831cc403b974098a379bcc"
       },
       "dependencies": [
-        "looop:investigation"
+        "looop:base"
       ]
     },
     {
       "id": "looop:backlog-prioritization",
       "path": "backlog-prioritization/SKILL.md",
+      "pack": "default",
       "description": "Select the next valuable, ready backlog outcome using current evidence and constraints.",
       "sha256": "b69ae2448aae221aa96caaad9dee0c1946507633b20de6f244278968cdcd2cd6",
       "license": "MIT",
@@ -65,12 +83,13 @@
         "sha256": "d05c001ea9d71ccf6aca975e0530a2a85545192b1eec9e06cc6d1339156c0f87"
       },
       "dependencies": [
-        "looop:investigation"
+        "looop:base"
       ]
     },
     {
       "id": "looop:requirement-brief",
       "path": "requirement-brief/SKILL.md",
+      "pack": "default",
       "description": "Express a researched need as user value, observable outcomes and an executable scope.",
       "sha256": "a597fa2281735d5633093021a266c233a487763f1e3700f69f7c545dc0ee38b2",
       "license": "MIT",
@@ -82,12 +101,13 @@
         "sha256": "e3aa10a437ed7f748a957bd5d1eb06d8fa3f56dc728dcb93ce484387ecc3fa13"
       },
       "dependencies": [
-        "looop:investigation"
+        "looop:base"
       ]
     },
     {
       "id": "looop:assumption-testing",
       "path": "assumption-testing/SKILL.md",
+      "pack": "default",
       "description": "Identify the risky belief behind a requirement and choose a proportionate falsifiable check.",
       "sha256": "33470a88ce705b851a12dd9d804d61f82709fe3ac9090466d5249459aaefd39f",
       "license": "MIT",
@@ -99,7 +119,7 @@
         "sha256": "5bb7cd3b2e7b7a1394f24bcb5fb520724c0d91766521272a0e14a0729bae0627"
       },
       "dependencies": [
-        "looop:investigation"
+        "looop:base"
       ]
     }
   ]
