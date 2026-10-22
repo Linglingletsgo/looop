@@ -87,6 +87,9 @@ def sync_prs():
    b.api('PATCH','/issues/'+folder.name,{'status':'cancelled','comment':'PR closed without merge; no automatic retry.'})
    state['state']='closed';path.write_text(json.dumps(state,indent=2));print(folder.name,'closed')
 
+ from preview import sync
+ sync(ROOT)
+
 def finish_mainline(folder,state,b):
  if state.get('mainline_verified'):return
  from lifecycle import refresh,save
