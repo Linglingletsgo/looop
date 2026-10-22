@@ -74,6 +74,35 @@ class Goals(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'walkthrough'):self.s.finish_goal('demo',goal['id'],'Merged and tests passed',[{'criterion':v,'path':'proof'} for v in goal['success_criteria']],0)
   self.assertEqual(self.s.read('demo')['product_goal']['status'],'active')
 
+ def test_active_slice_can_omit_contract_and_cannot_alias_current_state(self):
+  current={**self.experience_goal(),'id':'goal-existing'}
+  result=proposal({'remaining':['Remaining journey'],'progress':'Prior slice verified','slice_value':'Finish the same journey'},current)
+  for key in ('title','user_value','success_criteria','experience'):self.assertEqual(result[key],current[key])
+  result['experience']['after']='Mutated return'
+  self.assertNotEqual(result['experience'],current['experience'])
+
+ def test_drift_reports_all_fields_and_native_repair_inherits_contract(self):
+  from product_goals import ContractChanged,planning_context
+  from planning_runtime import invoke
+  from unittest.mock import Mock
+  current={**self.experience_goal(),'id':'goal-existing'}
+  drift={**current,'user_value':'Reworded value','experience':{**current['experience'],'after':'Slice-specific improvement'}}
+  with self.assertRaises(ContractChanged) as failure:proposal(drift,current)
+  self.assertIn('user_value, experience',str(failure.exception))
+  correction=failure.exception.recovery_instruction
+  self.assertIn(current['user_value'],correction)
+  self.assertIn(current['experience']['after'],correction)
+  self.assertIn('packet',correction)
+  original=copy.deepcopy(drift)
+  dynamic={'remaining':['Remaining journey'],'progress':'Prior slice verified','slice_value':'Finish current journey'}
+  run=Mock(side_effect=[json.dumps(drift),json.dumps(dynamic)])
+  result=invoke(run,self.root,self.root/'pm',planning_context(current),lambda:None,validate=lambda v:proposal(v,current))
+  self.assertEqual(proposal(result,current)['experience'],current['experience'])
+  self.assertIn('ACTIVE GOAL CORRECTION',run.call_args.args[2])
+  self.assertNotIn('repair its representation only',run.call_args.args[2])
+  self.assertEqual(drift,original)
+
+
 class Research(unittest.TestCase):
  def setUp(self):self.tmp=tempfile.TemporaryDirectory();self.repo=pathlib.Path(self.tmp.name);(self.repo/'spec.md').write_text('Current users cannot compare dated opportunities with reliable source attribution.')
  def tearDown(self):self.tmp.cleanup()
