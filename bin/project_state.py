@@ -358,6 +358,7 @@ def record_phase(root,job,phase,evidence):
  if not store:return
  binding=pathlib.Path(root)/'data/delivery-bindings'/(job+'.json')
  if not binding.exists():return
- d=json.loads(binding.read_text());store.bind(d['lane'],job,d['packet'],d.get('intent_ids',[]),d.get('authorization',{}));store.transition(d['lane'],job,phase,evidence)
+ from recovery import record_phase as record
+ record(store,json.loads(binding.read_text()),job,phase,evidence)
 
 

@@ -25,6 +25,18 @@ class StatefulDelivery(unittest.TestCase):
    return result
   with self.assertRaises(Held):self.execute(harness=model)
   doc=self.store.read('test');self.assertEqual(doc['phase'],'waiting_decision');self.assertTrue(doc['tasks']['task-one']['holds'])
+ def test_recovery_metadata_does_not_rebind_task_but_scope_changes_still_fail(self):
+  from project_state import record_phase,Conflict
+  self.prepare()
+  p=self.root/'data/delivery-bindings/task-one.json';binding=json.loads(p.read_text())
+  binding['packet'].update(execution_notes='Preserved draft',clarification_receipt='/archive/receipt')
+  p.write_text(json.dumps(binding))
+  record_phase(self.root,'task-one','queued',{'recovery_reason':'Product clarified fixture'})
+  self.assertEqual(self.store.read('test')['tasks']['task-one']['packet'],self.packet)
+  binding['packet']['allowed_paths']=['unrelated.py'];p.write_text(json.dumps(binding))
+  with self.assertRaises(Conflict):record_phase(self.root,'task-one','queued',{})
+
+
 class StatefulMerge(unittest.TestCase):
  setUp=test_merging.ProductMerge.setUp
  tearDown=test_merging.ProductMerge.tearDown
