@@ -26,8 +26,8 @@ def restore(checkpoint,folder,repo,available,public_required,fresh):
  statefile=source/'state.json'
  if statefile.is_symlink() or not statefile.is_file():return None
  state=json.loads(statefile.read_text())
- if state.get('error')!='Research plan explanation must be concise':return None
- # Only this compatibility failure is replayed; callers already bind checkpoints to
+ if state.get('error') not in ('Research plan explanation must be concise','Experiment runtime must be python, node or node_ts'):return None
+ # Only these compatibility failures are replayed; callers already bind checkpoints to
  # the same baseline, planning revision and selected requirement.
  for name in ('research-plan-retry-2','research-plan-retry-1','research-plan'):
   run=source/name
@@ -43,4 +43,22 @@ def restore(checkpoint,folder,repo,available,public_required,fresh):
   fresh()
   save(folder/'research-plan-reused.json',{'source_run':str(run),'plan':result,'model_calls':0})
   return result
+ return None
+
+def prior_report(checkpoint,fresh):
+ """Preserve the failed report as unverified context, never as a product verdict."""
+ if not checkpoint:return None
+ source=pathlib.Path(checkpoint)
+ state=json.loads((source/'state.json').read_text())
+ if state.get('error')!='Experiment runtime must be python, node or node_ts':return None
+ for name in ('research-retry-2','research-retry-1','research'):
+  run=source/name
+  if not (run/'handoff.json').is_file():continue
+  fresh()
+  try:
+   schema=json.loads((run/'handoff.schema.json').read_text())
+   identity={k:schema['properties'][k]['enum'][0] for k in ('version','run_id','nonce')}
+   if identity['run_id']!=name:raise ValueError('Saved research identity mismatch')
+   return read(run,schema['properties']['result'],identity)
+  except (ValueError,OSError,KeyError):return None
  return None

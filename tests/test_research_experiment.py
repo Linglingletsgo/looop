@@ -34,3 +34,33 @@ class Experiments(unittest.TestCase):
   with patch('sandbox.run',return_value=json.dumps(self.value)) as verifier:
    result=research.perform(run,self.repo,self.root/'research','PM','State',Mock(),{'harness':'codex','provider':'codex'})
   self.assertEqual(result['status'],'rejected');self.assertEqual(verifier.call_count,1);self.assertIn('Verification Agent experiment receipt',run.call_args.args[2])
+
+ def test_purpose_only_request_dispatches_native_agent(self):
+  self.probe={'purpose':'Observe the budget cap using in-memory model stubs'}
+  receipt=self.execute()
+  self.assertEqual(receipt['exit_code'],0)
+  self.assertIn('request_sha256',receipt)
+  self.assertIn('no database connections, network',self.run.call_args.args[2])
+
+ def test_missing_probe_uses_concrete_detail_without_inventing_script(self):
+  report={'status':'insufficient_evidence','next_step':{'kind':'experiment','detail':'Observe budget cap with synthetic inputs'}}
+  experiment.request(report)
+  self.assertEqual(report['next_step']['experiment'],{'purpose':report['next_step']['detail']})
+
+ def test_invalid_explicit_runtime_is_not_silently_replaced(self):
+  with self.assertRaisesRegex(ValueError,'Optional experiment runtime'):
+   experiment.validate({'purpose':'Observe','runtime':'shell'})
+
+ def test_supported_with_outstanding_experiment_requires_evidence_correction(self):
+  plan={'question':'Does value equal seven?','stop_condition':'Observe','skills':['looop:investigation']}
+  report={'status':'supported','question':'Does value equal seven?','finding':'Source suggests seven','counterevidence':'Runtime not observed','recommendation':'Probe','next_step':{'kind':'experiment','detail':'Observe actual value'},'skill_usage':[{'path':'looop:investigation','impact':'Identify gap'}]}
+  gap={**report,'status':'insufficient_evidence'}
+  done={**report,'status':'rejected'};done.pop('next_step')
+  run=Mock(side_effect=[json.dumps(v) for v in (plan,report,gap,done)])
+  with patch('sandbox.run',return_value=json.dumps(self.value)) as verifier:
+   result=research.perform(run,self.repo,self.root/'research','PM','State',Mock(),{'harness':'codex','provider':'codex'})
+  self.assertEqual(result['status'],'rejected')
+  self.assertEqual(verifier.call_count,1)
+  correction=run.call_args_list[2].args[2]
+  self.assertIn('RESEARCH REQUEST CORRECTION',correction)
+  self.assertNotIn('repair its representation only',correction)

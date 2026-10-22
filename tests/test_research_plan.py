@@ -48,3 +48,18 @@ class ResearchPlan(unittest.TestCase):
  def setUp(self):
   continuation.ResearchContinuation.setUp(self)
   self.plan_value=self.plan
+
+ def test_failed_experiment_restores_plan_and_unverified_report_not_verdict(self):
+  checkpoint=self.repo/'old';checkpoint.mkdir()
+  (checkpoint/'state.json').write_text(json.dumps({'error':'Experiment runtime must be python, node or node_ts'}))
+  saved={}
+  for name,value in (('research-plan',self.plan_value),('research-retry-2',{'status':'supported','finding':'Prior evidence remains unverified','next_step':{'kind':'experiment','detail':'Missing runtime observation'}})):
+   run=checkpoint/name;run.mkdir();identity=prepare(run,{'type':'object'})
+   saved[name]=json.dumps({**identity,'result':value});(run/'handoff.json').write_text(saved[name])
+  harness=Mock(return_value=json.dumps(self.supported))
+  result=research.perform(harness,self.repo,self.repo/'new','PM','State',Mock(),{'harness':'codex','provider':'codex'},checkpoint=checkpoint)
+  self.assertEqual(harness.call_count,1)
+  self.assertIn('Prior evidence remains unverified',harness.call_args.args[2])
+  self.assertIn('unverified context',harness.call_args.args[2])
+  self.assertEqual(result['status'],'supported')
+  for name,original in saved.items():self.assertEqual((checkpoint/name/'handoff.json').read_text(),original)
