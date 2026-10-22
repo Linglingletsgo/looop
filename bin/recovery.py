@@ -54,6 +54,5 @@ def prepare(root,issue,reason,interrupted=False):
 
 def record_phase(store,binding,job,phase,evidence):
  """Recovery transport metadata does not redefine the already bound task."""
- packet={k:v for k,v in binding['packet'].items() if k not in ('execution_notes','clarification_receipt')}
- store.bind(binding['lane'],job,packet,binding.get('intent_ids',[]),binding.get('authorization',{}))
+ store.bind(binding['lane'],job,binding['packet'],binding.get('intent_ids',[]),binding.get('authorization',{}))
  store.transition(binding['lane'],job,phase,evidence)

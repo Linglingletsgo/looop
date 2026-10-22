@@ -178,10 +178,11 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    return item
   return self.mutate(lane,request_id,command,apply,expected,source)
  def bind(self,lane,job,packet,intent_ids=None,provenance=None,planning_revision=None):
-  command={'type':'task_bound','job':job,'packet':{k:v for k,v in packet.items() if k!='execution_notes'},'intent_ids':intent_ids or []}
+  packet={k:v for k,v in packet.items() if k not in ('execution_notes','clarification_receipt')}
+  command={'type':'task_bound','job':job,'packet':packet,'intent_ids':intent_ids or []}
   def apply(doc):
    if job in doc['tasks']:
-    if doc['tasks'][job]['contract_hash']!=digest({k:v for k,v in packet.items() if k!='execution_notes'}):raise Conflict('Cannot mutate a bound task contract')
+    if doc['tasks'][job]['contract_hash']!=digest(packet):raise Conflict('Cannot mutate a bound task contract')
     return None
    if planning_revision is not None and doc['planning_revision']!=planning_revision:raise Conflict('External decisions changed during planning; replan before dispatch')
    if any(t.get('holds') for t in doc['tasks'].values()):raise Held('Unresolved change holds dispatch')
@@ -193,7 +194,7 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
    goal_contract=(provenance or {}).get('product_goal')
    if current and not goal_contract:raise Conflict('New tasks must continue the active product goal')
    goal=bind_goal(doc,job,goal_contract,intent_ids or []) if goal_contract else None
-   doc['tasks'][job]={'id':job,'phase':'queued','packet':packet,'contract_hash':digest({k:v for k,v in packet.items() if k!='execution_notes'}),'intent_ids':intent_ids or [],'holds':[],'evidence':provenance or {}}
+   doc['tasks'][job]={'id':job,'phase':'queued','packet':packet,'contract_hash':digest(packet),'intent_ids':intent_ids or [],'holds':[],'evidence':provenance or {}}
    if goal:doc['tasks'][job]['goal_id']=goal['id']
    for i in intent_ids or []:doc['intents'][i]['status']='scheduled'
    return doc['tasks'][job]
