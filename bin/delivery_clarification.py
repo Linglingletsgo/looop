@@ -19,12 +19,22 @@ def apply(packet,value):
  return result
 
 def effective_packet(folder,packet):
- path=folder/'product-clarification.json'
- if not path.exists():return packet
+ source=folder
+ if packet.get('clarification_receipt'):
+  source=pathlib.Path(packet['clarification_receipt'])
+  if source.is_symlink() or source.resolve().parent!=(folder.parent.parent/'delivery-attempts').resolve() or not source.name.startswith(folder.name+'-'):raise GateError('Invalid archived Product clarification')
+  original=json.loads((source/'packet.json').read_text())
+  strip=lambda p:{k:v for k,v in p.items() if k not in ('execution_notes','clarification_receipt')}
+  if strip(original)!=strip(packet):raise GateError('Archived Product clarification contract changed')
+ else:original=packet
+ path=source/'product-clarification.json'
+ if not path.exists():
+  if source!=folder:raise GateError('Missing archived Product clarification')
+  return packet
  doc=json.loads(path.read_text())
- if doc['packet_hash']!=packet_hash(packet):raise GateError('Product clarification belongs to another Packet')
- run=folder/doc['run_id']
- if run.parent!=folder or not run.name.startswith('product-clarification-'):raise GateError('Invalid Product clarification receipt')
+ if doc['packet_hash']!=packet_hash(original):raise GateError('Product clarification belongs to another Packet')
+ run=source/doc['run_id']
+ if run.parent!=source or not run.name.startswith('product-clarification-'):raise GateError('Invalid Product clarification receipt')
  from handoff import read
  schema=json.loads((run/'handoff.schema.json').read_text())
  identity={'version':1,'run_id':run.name,'nonce':schema['properties']['nonce']['enum'][0]}
@@ -60,7 +70,7 @@ def clarify(root,issue):
   rid='product-clarification-'+uuid.uuid4().hex[:12]
   workspace=snapshot(folder/'candidate',old['target_sha'],folder/'clarification-workspace')
   schema={'type':'object','properties':{'verdict':{'type':'string','enum':['approved','blocked']},'changes':{'type':'array','items':{'type':'object','properties':{'section':{'type':'string','enum':['requirements','acceptance']},'index':{'type':'integer'},'before':{'type':'string'},'after':{'type':'string'},'reason':{'type':'string'}},'required':['section','index','before','after','reason'],'additionalProperties':False}},'summary':{'type':'string'}},'required':['verdict','changes','summary'],'additionalProperties':False}
-  prompt=contract(resolve(workspace,policy.get('project_adapter')),'product-manager')+'\nClarify contradictory criteria in this existing task, not a new product proposal. Read the Packet and independent review findings. Preserve the original outcome, all truthful unknowns, isolation, evidence binding, and all regression checks. No source edits, installation, commands that change production data, commits, publication, or scope expansion. Resolve wording only; do not declare the implementation correct or replace independent review. Distinguish deadline-specific assertions from unrelated unknowns; preserve truthful non-deadline unknowns. Inspect the documented results route and sandbox build evidence before deciding whether equivalent production webpack build is acceptable. If this requires changing intended product behavior or expanding allowed paths, return blocked with no changes. Changes must quote each original clause exactly using zero-based indices. Write the supplied handoff.json; chat is not parsed.\nPacket: '+json.dumps(packet,ensure_ascii=False)+'\nIndependent findings: '+json.dumps(old.get('reviews'),ensure_ascii=False)+'\nEvidence root: '+str(folder/'artifacts')
+  prompt=contract(resolve(workspace,policy.get('project_adapter')),'product-manager')+'\nClarify contradictory criteria in this existing task, not a new product proposal. Read the Packet, Builder blocker and independent review findings. Preserve the original outcome, all truthful unknowns, isolation, evidence binding, and all regression checks. No source edits, installation, commands that change production data, commits, publication, or scope expansion. Resolve wording only; do not declare the implementation correct or replace independent review. Preserve existing product input precision and behavior. If fixture amounts or steps contradict that contract, clarify the fixture and all dependent expectations instead of widening product behavior. Read the preserved Builder workspace and actual observations; keep isolation and cleanup requirements. If this requires changing intended product behavior or expanding allowed paths, return blocked with no changes. Changes must quote each original clause exactly using zero-based indices. Write the supplied handoff.json; chat is not parsed.\nPacket: '+json.dumps(packet,ensure_ascii=False)+'\nBuilder blocker: '+str(old.get('error',''))[:16000]+'\nPreserved Builder workspace: '+str(folder/old.get('pending_builder',{}).get('workspace','candidate'))+'\nIndependent findings: '+json.dumps(old.get('reviews'),ensure_ascii=False)+'\nEvidence root: '+str(folder/'artifacts')
   value=invoke(run,workspace,folder/rid,prompt,fresh,validate=lambda v:apply(packet,v) if v.get('verdict')=='approved' else None,role='readonly',dependencies=pathlib.Path(policy['dependencies']) if policy.get('dependencies') else None,git_metadata=folder/'candidate/.git',timeout=None,execution_route=route(read(root),'planning'),handoff_schema=schema)
   fresh()
   recovery=folder/(rid+'-recovery.json')

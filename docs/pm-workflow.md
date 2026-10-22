@@ -39,3 +39,5 @@ Product Manager 关联 6 个通用 skills：`pm-investigation`、`pm-competitive
 Research plan optional skill_reason/fallback_reason values may be absent or null; the controller omits null values from effective context. Missing-skill and project-method gap explanations remain mandatory when applicable. Type errors name the field separately from the 2000-character limit. After an explicit retry of the legacy explanation compatibility failure, a same-contract checkpoint may reuse the latest identity-validated research-plan handoff; the plan is revalidated against current skills and permissions before continuing research. Original handoffs remain unchanged.
 
 活动目标的 title、user_value、success_criteria、experience 由当前状态维护，后续切片只需提交 remaining、progress、slice_value；省略的契约字段按原值继承。显式提交的契约值有差异时仍拒绝，并给出逐字段纠正说明与当前原值。切片自己的旅程和前后变化写入 Packet，不覆盖整个产品目标。
+
+Builder 因验收样例与现有产品规则矛盾而停止时，Product 澄清读取 Builder 原始阻塞、保留的工作区与审核意见。优先修正样例及关联预期，不隐式放宽产品规则或写入范围。显式恢复会归档草稿，并携带经原始 handoff 身份与 Packet 核验的澄清；恢复后仍执行检查和独立审核。

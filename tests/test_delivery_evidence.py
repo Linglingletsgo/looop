@@ -78,7 +78,7 @@ class EvidenceRepair(unittest.TestCase):
   (bindings/'task-one.json').write_text(json.dumps({'packet':self.packet,'policy':self.policy}))
   calls=[]
   def product(workspace,scratch,prompt,**kw):
-   calls.append(1);scratch.mkdir(parents=True)
+   calls.append(1);self.assertIn('Builder blocker:',prompt);self.assertIn('input precision',prompt);scratch.mkdir(parents=True)
    identity=prepare(scratch,kw['handoff_schema'])
    clause=self.packet['requirements'][0]
    value={'verdict':'approved','summary':'Clarified wording, no scope expansion','changes':[{'section':'requirements','index':0,'before':'partial' if len(calls)==1 else clause,'after':clause+' exactly','reason':'Clarify exactness'}]}
@@ -92,6 +92,35 @@ class EvidenceRepair(unittest.TestCase):
   self.assertTrue(doc['run_id'].endswith('-retry-1'))
   self.assertEqual(effective_packet(folder,self.packet),effective)
   self.assertEqual(json.loads((folder/'packet.json').read_text()),self.packet)
+
+ def test_explicit_retry_preserves_product_clarification_and_builder_draft(self):
+  from recovery import prepare
+  from handoff import prepare as handoff
+  def blocked(workspace,scratch,prompt,**kw):
+   if kw['role']=='builder':
+    (workspace/'app.py').write_text('value = 123\n')
+    return '{"verdict":"blocked","findings":["Fixture conflicts with input precision"]}'
+   return '{"verdict":"approved","findings":[]}'
+  with self.assertRaisesRegex(GateError,'Builder blocked'):self.execute(harness=blocked)
+  folder=self.root/'data/deliveries/task-one';run=folder/'product-clarification-test';run.mkdir()
+  identity=handoff(run,{'type':'object'})
+  clause=self.packet['requirements'][0]
+  value={'verdict':'approved','changes':[{'section':'requirements','index':0,'before':clause,'after':clause+' with valid fixture','reason':'Keep input contract'}]}
+  (run/'handoff.json').write_text(json.dumps({**identity,'result':value}))
+  (folder/'product-clarification.json').write_text(json.dumps({'packet_hash':packet_hash(self.packet),'run_id':run.name,'result':value}))
+  bindings=self.root/'data/delivery-bindings';bindings.mkdir()
+  binding=bindings/'task-one.json';binding.write_text(json.dumps({'packet':self.packet,'policy':self.policy,'lane':'test'}))
+  archive=prepare(self.root,'task-one','Product clarified fixture')
+  packet=json.loads(binding.read_text())['packet']
+  self.assertIn('+value = 123',packet['execution_notes'])
+  self.assertTrue((archive/'build-1/app.py').is_file())
+  effective=effective_packet(folder,packet)
+  self.assertIn('valid fixture',effective['requirements'][0])
+  self.assertEqual(effective['allowed_paths'],packet['allowed_paths'])
+  with self.assertRaisesRegex(GateError,'contract changed'):
+   effective_packet(folder,{**packet,'baseline_sha':'f'*40})
+  with self.assertRaisesRegex(GateError,'Invalid archived'):
+   effective_packet(folder,{**packet,'clarification_receipt':str(self.root)})
 
 class Clarification(unittest.TestCase):
  def setUp(self):

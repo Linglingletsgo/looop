@@ -35,6 +35,9 @@ def prepare(root,issue,reason,interrupted=False):
   notes.append('Previous findings: '+json.dumps(state.get('reviews',{}),ensure_ascii=False))
   text='\n'.join(notes)
   if len(text)>100000:raise ValueError('Recovery evidence too large; provide a narrower Packet')
+  if (folder/'product-clarification.json').is_file():
+   from delivery_clarification import effective_packet
+   effective_packet(folder,d['packet'])
   store=configured_store(root)
   if interrupted:
    if store:store.transition(d['lane'],issue,'blocked',{'interrupted_stage':state['state']})
@@ -43,6 +46,7 @@ def prepare(root,issue,reason,interrupted=False):
   archive=root/'data/delivery-attempts'/(issue+'-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
   archive.parent.mkdir(exist_ok=True)
   d['packet']['execution_notes']=text;d['policy'].pop('timeout',None);d['policy'].pop('check_timeout',None)
+  if (folder/'product-clarification.json').is_file():d['packet']['clarification_receipt']=str(archive)
   tmp=binding.with_suffix('.tmp');tmp.write_text(json.dumps(d,ensure_ascii=False,indent=2));tmp.chmod(0o600);tmp.replace(binding)
   folder.rename(archive)
   (archive/'recovery.json').write_text(json.dumps({'reason':reason,'source':str(source),'next_attempt_requires_fresh_gates':True},indent=2))
