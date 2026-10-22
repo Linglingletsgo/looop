@@ -1,6 +1,7 @@
 """One quiet board status issue; update description only when meaningful state changes."""
 import json
 from board import ROOT,Board
+from tracker import open_tracker
 from lifecycle import save
 from health import progress
 
@@ -9,7 +10,7 @@ def scope_description(mandate):
  return '允许文件：由当前任务 Packet 确定，并执行项目范围检查'
 
 def report(lane):
- s=json.loads((ROOT/'data/control.json').read_text());cfg=s['projects'][lane];b=Board();rows=['# 自动队列状态','范围：既有行为的合成回归；PM定义契约 → Builder → 检查 → Reviewer → 按项目配置的发布/合并 → 主线复验。Acceptance仅在项目workflow显式配置时执行。','不按总时长终止；15分钟无事件只提示。']
+ b=open_tracker(ROOT,Board);rows=['# 自动队列状态','范围：既有行为的合成回归；PM定义契约 → Builder → 检查 → Reviewer → 按项目配置的发布/合并 → 主线复验。Acceptance仅在项目workflow显式配置时执行。','不按总时长终止；15分钟无事件只提示。']
  from project_state import configured_store
  store=configured_store(ROOT)
  if store:
@@ -58,8 +59,8 @@ def report(lane):
  body='\n\n'.join(rows);path=ROOT/'data/loop-dashboard'/(lane+'.json');old=json.loads(path.read_text()) if path.exists() else {}
  if old.get('body')==body:return
  if not old.get('issue'):
-  owner=b.api('GET','/auth/get-session')['user']['id'];t=b.api('POST',f'/companies/{cfg.get("company",s.get("company"))}/issues',{'projectId':cfg['id'],'title':'自动队列 / 当前状态与阻塞原因','status':'in_progress','assigneeUserId':owner,'description':body});old['issue']=t['id']
- else:b.api('PATCH','/issues/'+old['issue'],{'description':body})
+  t=b.create(lane,'status','自动队列 / 当前状态与阻塞原因','in_progress',body,assignee='owner');old['issue']=t['id']
+ else:b.update(old['issue'],description=body)
  old['body']=body;save(path,old)
 if __name__=='__main__':
  import sys

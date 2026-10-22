@@ -46,12 +46,12 @@ Creation is local and atomic, so the `binding-request.json` "posting / unknown r
 
 ## Tracker seam during migration
 
-Call sites use `jobs.Jobs`, never `Board`. A `PaperclipMirror` (optional, `data/local-settings.json` `{"mirror": {"paperclip": true}}`) may replay job events to Paperclip from `state-sync.py`; default off. Removing Paperclip = leaving the mirror off and deleting the mirror module.
+Planning call sites use the `tracker` seam (`bin/tracker.py`), never `Board`: `PaperclipTracker` (default) maps lanes/roles through `data/control.json` and keeps the current HTTP calls unchanged; `LocalTracker` uses `jobs.Jobs`. `data/local-settings.json` `{"tracker": "local"}` opts in; missing or invalid settings stay on Paperclip. A `PaperclipMirror` (optional `{"mirror": {"paperclip": true}}`) may replay job events to Paperclip from `state-sync.py`; default off. Removing Paperclip = leaving the mirror off and deleting the mirror module.
 
 ## Slices
 
 - **P1a** `bin/jobs.py` + tests. No call-site changes.
-- **P1b** planning path: `autonomy.py`, `binding_requests.py`, `loop-status.py`, `planning_intervention.py`, `planning-recovery.py` use `Jobs`.
+- **P1b** planning path via the tracker seam: `autonomy.py`, `binding_requests.py`, `loop-status.py`, `planning_intervention.py`, `planning-recovery.py`. Local mode is not end-to-end until P1c.
 - **P1c** delivery path: `delivery-worker.py` (lease, no `PAPERCLIP_AGENT_ID`), `dispatch.py`, `delivery-control.py`, `restart-recovery.py`, `health.py`, `launch_loops.py` worker launch.
 - **P1d** `scripts/migrate-jobs.py`: import existing bindings / deliveries / autonomy receipts into `jobs` with their legacy ids and derived status; idempotent, dry-run by default.
 - **P1e** delete Paperclip-only modules (`bridge.py` logic moved where still needed, `gtp_worker.py`, `fixture_worker.py`, `gtp_resume.py`, `provision*.py`, `setup_fixture.py`, `control.py` agent creation), optional mirror in `state-sync.py`.

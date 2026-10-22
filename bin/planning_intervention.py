@@ -1,6 +1,7 @@
 """Current unresolved PM receipts and explicit read-only planning recovery."""
 import fcntl,json,pathlib,re
 from lifecycle import save
+from tracker import as_tracker
 from process_owner import alive
 from project_state import Store,Conflict
 
@@ -21,7 +22,8 @@ def preview(root,lane):
   values.append({'kind':'planning','job':job,'title':'PM 规划受阻','reason':reason[:4000],'retry_allowed':eligible,'instruction':(('调研未完成。请处理具体证据缺口；需要产品政策决定时先补充产品决定，公开来源不可用时等待恢复。确认后重新规划。' if state.get('failure',{}).get('category')=='research_incomplete' else '修复原因后可重新规划。旧提案保留，PM 会读取最新代码和项目状态；不会重跑已完成开发。') if eligible else '规划进程尚未确认停止，或已进入任务绑定阶段；需要维护对话核对，不能直接重跑。'),'diagnostic':f'项目: {lane}\nPM 记录: {job}\n原因: {reason[:4000]}\n证据目录: {path.parent}\n请保留提案并核对当前代码与状态后恢复。'})
  return values
 
-def retry(root,lane,job,reason,expected,board):
+def retry(root,lane,job,reason,expected,tracker):
+ tracker=as_tracker(tracker,root)
  if not isinstance(job,str) or not re.fullmatch('[a-zA-Z0-9-]{1,80}',job):raise ValueError('Invalid planning id')
  if not isinstance(reason,str) or len(reason.strip())<4:raise ValueError('请说明已处理或核验的内容。')
  lock=root/'data/locks'/('autonomy-'+lane);lock.parent.mkdir(parents=True,exist_ok=True)
@@ -35,10 +37,9 @@ def retry(root,lane,job,reason,expected,board):
   if not item or not item['retry_allowed']:raise ValueError('该规划不能直接重试，请刷新并核对进程与绑定状态。')
   path=root/'data/autonomy'/lane/job/'state.json';state=json.loads(path.read_text())
   if state.get('issue'):
-   cfg=json.loads((root/'data/control.json').read_text())['projects'][lane]
-   issue=board.api('GET','/issues/'+state['issue'])
-   if issue.get('projectId')!=cfg['id'] or issue.get('status') not in ('in_progress','blocked','cancelled'):raise ValueError('PM 任务状态不匹配，需要先核对。')
-   board.api('PATCH','/issues/'+state['issue'],{'status':'cancelled','comment':'人工核验后重新规划，原提案保留：'+reason[:2000]})
+   issue=tracker.get(state['issue'])
+   if issue['lane']!=lane or issue['status'] not in ('in_progress','blocked','cancelled'):raise ValueError('PM 任务状态不匹配，需要先核对。')
+   tracker.update(state['issue'],status='cancelled',comment='人工核验后重新规划，原提案保留：'+reason[:2000])
   if state.get('error')=='No executable confirmed requirement selected' and (path.parent/'proposal.json').is_file():
    state['reuse_saved_proposal']=job
   state['research_checkpoint']=str(path.parent)
@@ -53,8 +54,9 @@ def retry(root,lane,job,reason,expected,board):
 def blocked_patch(reason):
  return {'status':'blocked','unblockDescriptor':{'owner':'board','action':'在 looop 的“处理选题受阻”中核对原因并重新规划；绑定阶段异常交给维护对话。'},'comment':str(reason)[:4000]}
 
-def resume_completion(root,lane,job,reason,expected,board,run_id='pm'):
+def resume_completion(root,lane,job,reason,expected,tracker,run_id='pm'):
  """Validate a saved PM conclusion without another model call or development replay."""
+ tracker=as_tracker(tracker,root)
  import hashlib,time
  from handoff import read
  from repository import git
@@ -92,8 +94,8 @@ def resume_completion(root,lane,job,reason,expected,board,run_id='pm'):
    verify_completion(repo,folder/'pm',goal,evidence,sha,artifact_base=root)
    rationale=value.get('reason')
    if not isinstance(rationale,str) or not 1<=len(rationale.strip())<=2000:raise ValueError('Concise completion rationale required')
-   task=board.api('GET','/issues/'+state['issue'])
-   if task.get('projectId')!=cfg['id'] or task.get('status') not in ('blocked','in_progress'):raise ValueError('PM board issue mismatch')
+   task=tracker.get(state['issue'])
+   if task['lane']!=lane or task['status'] not in ('blocked','in_progress'):raise ValueError('PM board issue mismatch')
    save(folder/'completion-resume.json',{'previous_state':state,'source_run':run_id,'reason':reason,'target_sha':sha})
    save(folder/'proposal.json',value)
    store.finish_goal(lane,goal['id'],rationale,evidence,doc['planning_revision'])
@@ -101,7 +103,7 @@ def resume_completion(root,lane,job,reason,expected,board,run_id='pm'):
    for key in ('error','failure'):state.pop(key,None)
    save(path,state)
    save(root/'data/autonomy'/(lane+'-status.json'),{'state':'ready','reason':'已核验并接收保存的 PM 完成结果；后续遵循当前循环设置。','at':time.time()})
-   try:board.api('PATCH','/issues/'+state['issue'],{'status':'done','comment':state['reason']+'；保存结果接续：'+reason})
+   try:tracker.update(state['issue'],status='done',comment=state['reason']+'；保存结果接续：'+reason)
    except Exception as exc:
     state['completion_board_sync_pending']=str(exc)[:1000];save(path,state)
    return {'goal_completed':True,'source_run':run_id,'model_calls':0,'board_sync_pending':bool(state.get('completion_board_sync_pending'))}
@@ -111,8 +113,9 @@ if __name__=='__main__':
  import argparse,pathlib
  from runtime import ROOT
  from board import Board
+ from tracker import open_tracker
  p=argparse.ArgumentParser()
  p.add_argument('action',choices=['resume-completion']);p.add_argument('lane');p.add_argument('job')
  p.add_argument('--reason',required=True);p.add_argument('--expected',type=int,required=True);p.add_argument('--run-id',default='pm')
  a=p.parse_args()
- print(json.dumps(resume_completion(ROOT,a.lane,a.job,a.reason,a.expected,Board(),a.run_id),ensure_ascii=False))
+ print(json.dumps(resume_completion(ROOT,a.lane,a.job,a.reason,a.expected,open_tracker(ROOT,Board),a.run_id),ensure_ascii=False))

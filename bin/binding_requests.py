@@ -3,10 +3,12 @@ import fcntl,json,pathlib,subprocess,uuid
 from lifecycle import save
 from project_state import configured_store
 from delivery import validate
+from tracker import as_tracker
 
-def finish(root,board,path,record,issue):
- binding=record['binding'];lane=binding['lane'];cfg=json.loads((root/'data/control.json').read_text())['projects'][lane]
- if issue.get('projectId')!=cfg['id'] or issue.get('status')!='backlog' or issue.get('assigneeAgentId') or issue.get('assigneeUserId'):raise ValueError('Remote issue changed; preserve manual state')
+def finish(root,tracker,path,record,issue):
+ tracker=as_tracker(tracker,root)
+ binding=record['binding'];lane=binding['lane']
+ if issue.get('lane')!=lane or issue.get('status')!='backlog' or issue.get('assignee'):raise ValueError('Remote issue changed; preserve manual state')
  policy=root/'data/delivery-policies'/(lane+'.json')
  if json.loads(policy.read_text())!=binding['policy']:raise ValueError('Policy changed during binding recovery')
  validate(binding['packet'],binding['policy'])
@@ -23,19 +25,21 @@ def finish(root,board,path,record,issue):
  record.update(state='bound',issue=issue);save(path,record)
  return issue
 
-def create(root,board,folder,binding,company,payload,planning_revision=None):
- folder=pathlib.Path(folder);folder.mkdir(parents=True,exist_ok=True,mode=0o700);path=folder/'binding-request.json'
+def create(root,tracker,folder,binding,company,payload,planning_revision=None):
+ tracker=as_tracker(tracker,root);folder=pathlib.Path(folder);folder.mkdir(parents=True,exist_ok=True,mode=0o700);path=folder/'binding-request.json'
  if path.exists():raise ValueError('Existing binding request; use reconciliation instead of reposting')
- marker='<!-- binding-request:'+uuid.uuid4().hex+' -->';payload={**payload,'description':payload.get('description','')+'\n\n'+marker}
+ token=uuid.uuid4().hex;marker='<!-- binding-request:'+token+' -->'
+ payload={**payload,'description':payload.get('description','')+'\n\n'+marker}
  record={'state':'posting','marker':marker,'binding':binding,'company':company,'payload':payload,'planning_revision':planning_revision}
+ if tracker.idempotent_create:record['job_id']=token
  save(path,record)
- # The posting journal is durable before sending. Never retry POST after an unknown result.
- issue=board.api('POST',f'/companies/{company}/issues',payload)
- issue={**payload,**issue};record.update(state='binding',issue=issue);save(path,record)
- return finish(root,board,path,record,issue)
+ # The posting journal is durable before sending. Local creation is idempotent; remote POST is never retried.
+ issue=tracker.create(binding['lane'],'delivery',payload['title'],payload['status'],payload['description'],job_id=token if tracker.idempotent_create else None,company=company)
+ record.update(state='binding',issue=issue);save(path,record)
+ return finish(root,tracker,path,record,issue)
 
-def reconcile(root,board):
- results=[];lock=root/'data/locks/binding-requests';lock.parent.mkdir(parents=True,exist_ok=True)
+def reconcile(root,tracker):
+ tracker=as_tracker(tracker,root);results=[];lock=root/'data/locks/binding-requests';lock.parent.mkdir(parents=True,exist_ok=True)
  with lock.open('w') as h:
   try:fcntl.flock(h,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:return []
@@ -55,16 +59,22 @@ def reconcile(root,board):
       target=root/'data/delivery-bindings'/(record['issue']['id']+'.json')
       if target.exists() and json.loads(target.read_text())==binding:
        record['state']='bound';save(path,record);results.append({'job':record['issue']['id'],'state':'bound'});continue
-      issue=board.api('GET','/issues/'+record['issue']['id'])
+      issue=tracker.get(record['issue']['id'])
+     elif tracker.idempotent_create:
+      payload=record['payload']
+      if not record.get('job_id'):raise ValueError('Journal predates the local tracker; reconcile it in Paperclip mode or migrate it first')
+      try:issue=tracker.get(record['job_id'])
+      except KeyError:issue=tracker.create(binding['lane'],'delivery',payload['title'],payload['status'],payload['description'],job_id=record['job_id'])
+      record.update(state='binding',issue=issue);save(path,record)
      else:
-      rows=board.api('GET',f'/companies/{record["company"]}/issues?projectId={record["payload"]["projectId"]}')
-      matches=[r for r in rows if record['marker'] in (r.get('description') or '')]
+      matches=tracker.find(binding['lane'],record['marker'],record.get('company'),record['payload'].get('projectId'))
       if len(matches)!=1:raise ValueError('Remote create result unresolved; query again, never repost')
       issue=matches[0];record.update(state='binding',issue=issue);save(path,record)
-     finish(root,board,path,record,issue);results.append({'job':issue['id'],'state':'bound'})
+     finish(root,tracker,path,record,issue);results.append({'job':issue['id'],'state':'bound'})
    except Exception as exc:results.append({'job':path.parent.name,'state':'deferred','reason':str(exc)})
  save(root/'data/binding-recovery-status.json',{'results':results});return results
 
 if __name__=='__main__':
  from board import ROOT,Board
- print(json.dumps(reconcile(ROOT,Board()),ensure_ascii=False))
+ from tracker import open_tracker
+ print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))

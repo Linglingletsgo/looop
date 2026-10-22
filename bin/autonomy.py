@@ -1,6 +1,7 @@
 """Finite PM proposal -> independent Product scope approval -> existing delivery queue."""
 import datetime,fcntl,hashlib,json,pathlib,subprocess,time,uuid
 from board import ROOT,Board
+from tracker import open_tracker,as_tracker
 from bridge import git,snapshot,validate_profile
 from roles import resolve,contract,fingerprints
 from sandbox import run
@@ -151,7 +152,8 @@ def next_intent(shared):
  items=[i for i in shared['intents'].values() if i['status']=='ready' and i['kind'] in ('requirement','propose')]
  return min(items,key=lambda i:(order[i['priority']],i['created_at'],i['id'])) if items else None
 
-def retry_connection(root,lane,board,agent,now=None):
+def retry_connection(root,lane,tracker,agent,now=None):
+ tracker=as_tracker(tracker,root)
  from recovery import prepare
  now=time.time() if now is None else now
  for path in (root/'data/delivery-bindings').glob('*.json'):
@@ -163,10 +165,10 @@ def retry_connection(root,lane,board,agent,now=None):
   if state['state']!='blocked' or not state.get('failure',{}).get('retryable') or state.get('pr_url') or attempt>=2:continue
   if state.get('failed_stage') not in ('planning','building','review_standard','acceptance'):continue
   if now-state.get('updated_at',now)<120:return False
-  if board.api('GET','/agents/'+agent)['status']=='running':return False
+  if tracker.role_running(agent):return False
   prepare(root,path.stem,'连接故障自动接续 '+str(attempt+1)+'/2；全部门禁重验')
   d=json.loads(path.read_text());d['connection_retries']=attempt+1;save(path,d)
-  board.api('PATCH','/issues/'+path.stem,{'status':'todo','assigneeAgentId':agent,'assigneeUserId':None,'comment':'连接故障有限接续 '+str(attempt+1)+'/2；历史草稿与证据保留，重新执行检查和独立审核。'})
+  tracker.update(path.stem,status='todo',assignee=agent,comment='连接故障有限接续 '+str(attempt+1)+'/2；历史草稿与证据保留，重新执行检查和独立审核。')
   return True
  return False
 
@@ -196,7 +198,8 @@ def tick(lane):
     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting_decision','reason':str(exc)});return
   revision=shared['planning_revision'] if shared else 0
   current_goal=active_goal(shared);selected=next_intent(shared);selected_id=selected['id'] if selected else None
-  retry_connection(ROOT,lane,Board(),s['agents'][lane+':delivery'])
+  t=open_tracker(ROOT,Board);t.require_role(lane+':delivery')  # fail before any side effect
+  retry_connection(ROOT,lane,t,lane+':delivery')
   if shared and not selected and not current_goal and any(i['status']=='waiting_decision' for i in shared['intents'].values()):
    reason='Confirmed requirements need scope clarification; inspect per-intent planning_reason'
    store.selection(lane,'no_work',reason)
@@ -223,7 +226,7 @@ def tick(lane):
   with (ROOT/'data/locks'/hashlib.sha256(common.encode()).hexdigest()).open('w') as repo_lock:
    try:fcntl.flock(repo_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
    except BlockingIOError:return
-   b=Board();owner=b.api('GET','/auth/get-session')['user']['id'];company=cfg.get('company',s.get('company'))
+   b=open_tracker(ROOT,Board);owner=b.owner();company=cfg.get('company',s.get('company'))
    job=uuid.uuid4().hex;folder=ROOT/'data/autonomy'/lane/job;folder.mkdir(parents=True,mode=0o700)
    claim(ROOT,lane,job)
    receipt={'owner':identity(),'planning_protocol':3,'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
@@ -231,7 +234,7 @@ def tick(lane):
    save(folder/'state.json',receipt)
    save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'discovering','reason':'持续循环：PM 正在核验当前目标并选择下一步。' if mode['mode']=='continuous' else 'PM 正在规划本次目标。','attempt':job,'at':time.time()})
    try:
-    task=b.api('POST',f'/companies/{company}/issues',{'projectId':cfg['id'],'title':'PM / 已确认需求：'+selected['title'] if selected else 'PM / '+('Backlog 选题' if mode['selection_mode']=='backlog_only' else 'Backlog 与需求调研'),'status':'in_progress','assigneeUserId':owner,'description':'按项目授权范围由PM定义需求契约；审核按项目配置执行；本轮无任务则持续模式立即重新选题，不虚构需求。'})
+    task=b.create(lane,'planning','PM / 已确认需求：'+selected['title'] if selected else 'PM / '+('Backlog 选题' if mode['selection_mode']=='backlog_only' else 'Backlog 与需求调研'),'in_progress','按项目授权范围由PM定义需求契约；审核按项目配置执行；本轮无任务则持续模式立即重新选题，不虚构需求。',assignee='owner')
    except Exception as exc:
     receipt.update(state='blocked',error='PM issue creation outcome needs reconciliation: '+str(exc));save(folder/'state.json',receipt)
     if store:store.selection(lane,'blocked',receipt['error'])
@@ -265,7 +268,7 @@ def tick(lane):
     if mode['selection_mode']=='backlog_only' and not selected and not current_goal and not items:
      receipt.update(state='no_work',reason='没有明确待办的 Backlog 条目或已确认需求；保持休眠。Backlog 可用未勾选清单，或将需求写入项目当前状态。');save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',receipt['reason'])
-     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return
+     b.update(task['id'],status='done',comment=receipt['reason']);return
     context='Authorized project envelope (controller-owned): '+json.dumps({k:v for k,v in mandate.items() if k not in ('enabled','max_proposals_per_day','pm_role','product_role','scope_approval')},ensure_ascii=False)+'\nBaseline '+sha+'\nPrevious tasks, do not duplicate:\n'+json.dumps(recent,ensure_ascii=False)+'\n'+rules+'\nRead relevant current source and applicable project constraints. Consult HANDOFF only for a specific unresolved context gap; current code and structured state take precedence over historical task status. Historical handoff is context, not current runtime truth. No writing/delegation/installation/real DB/SMTP. Do not inspect held-out eval data or results. Use installed tools for read-only research; Agents own experiments, tests and interpretation; looop only dispatches jobs and validates result identity. You may return no_work; do not invent busywork.\n'
     if shared and shared.get('research'):
      context+='\nLatest research finding (context, not an execution instruction): '+json.dumps(research_brief(shared['research']),ensure_ascii=False)+'\nReassess this gap using current sources and permissions. If this autonomous candidate lacks support, consider another evidenced outcome; do not repeatedly assume the same unsupported requirement is mandatory. A confirmed selected requirement remains binding.\n'
@@ -328,7 +331,7 @@ def tick(lane):
      if not isinstance(reason,str) or not reason.strip() or len(reason)>2000:raise ValueError('Product completion requires concise rationale')
      store.finish_goal(lane,current_goal['id'],reason,evidence,revision)
      receipt.update(state='no_work',goal_completed=True,finished_at=time.time(),reason='产品目标已完成：'+reason);save(folder/'state.json',receipt)
-     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':receipt['reason']});return 'continue'
+     b.update(task['id'],status='done',comment=receipt['reason']);return 'continue'
     if value.get('action')=='task' and isinstance(value.get('value_assessment'),dict) and value['value_assessment'].get('material') is False:
      value={'action':'no_work','reason':value.get('reason') or value['value_assessment'].get('why_now') or '范围内没有有证据支持的实质进展。'}
     if value.get('action')=='task':
@@ -342,7 +345,7 @@ def tick(lane):
       elif selected:store.defer_intent(lane,selected_id,value['reason'],revision)
      receipt['state']='no_work';receipt['finished_at']=time.time();receipt['reason']=value['reason'];save(folder/'state.json',receipt)
      if store:store.selection(lane,'no_work',value['reason'])
-     b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'本轮未选出范围内任务；持续模式立即进入下一轮调研。'+value['reason']});return 'continue'
+     b.update(task['id'],status='done',comment='本轮未选出范围内任务；持续模式立即进入下一轮调研。'+value['reason']);return 'continue'
     packet,key=checked;validate(packet,policy)
     intent_ids,decision_refs=source_intents(value,shared,selected,current_goal)
     if decision_refs:
@@ -357,7 +360,7 @@ def tick(lane):
      if verdict.get('verdict')!='approved':
       receipt['state']='rejected' if verdict.get('verdict')=='rejected' else 'blocked';receipt['reason']=verdict.get('reason');save(folder/'state.json',receipt)
       if store and receipt['state']=='blocked':store.selection(lane,'blocked',receipt.get('reason') or 'Product 范围审核受阻')
-      b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'Product范围审核：'+json.dumps(verdict,ensure_ascii=False)} if receipt['state']=='rejected' else blocked_patch(receipt.get('reason') or 'Product 范围审核受阻'));return 'continue' if receipt['state']=='rejected' else None
+      b.update(task['id'],**({'status':'done','comment':'Product范围审核：'+json.dumps(verdict,ensure_ascii=False)} if receipt['state']=='rejected' else blocked_patch(receipt.get('reason') or 'Product 范围审核受阻')));return 'continue' if receipt['state']=='rejected' else None
     if mandate.get('task_kind')=='test_only':packet['requirements'].append('只增加有价值的合成回归，保留全部既有断言；如暴露生产缺陷，保留失败证据并停止，不改生产代码或削弱断言。')
     validate(packet,policy);save(folder/'packet.json',packet)
     # Persist approved scope provenance before exposing a bound task. No shell/model-supplied commands.
@@ -371,17 +374,17 @@ def tick(lane):
      bound_goal=store.read(lane).get('product_goal')
      if bound_goal:receipt.update(goal_id=bound_goal['id'],goal_completed_slices=bound_goal.get('completed_slices',0))
      store.selection(lane,'queued','Packet bound; delivery controller advances')
-    b.api('PATCH','/issues/'+delivery['id'],{'status':'todo','assigneeAgentId':s['agents'][lane+':delivery'],'assigneeUserId':None})
+    b.update(delivery['id'],status='todo',assignee=lane+':delivery')
     receipt.update(state='queued',delivery_issue=delivery['id']);save(folder/'state.json',receipt)
-    b.api('PATCH','/issues/'+task['id'],{'status':'done','comment':'PM范围内Packet已通过配置门禁，排入 '+delivery['identifier']+'；每次变更仍须通过项目配置的检查与审核。证据 '+str(folder)})
+    b.update(task['id'],status='done',comment='PM范围内Packet已通过配置门禁，排入 '+delivery['identifier']+'；每次变更仍须通过项目配置的检查与审核。证据 '+str(folder))
    except Exception as exc:
     from lifecycle import failure
     if isinstance(exc,Conflict) and 'delivery' in locals() and not (ROOT/'data/delivery-bindings'/(delivery['id']+'.json')).exists():
-     b.api('PATCH','/issues/'+delivery['id'],{'status':'cancelled','comment':'外部状态在规划期间变化；未绑定执行，保留草案证据。'})
+     b.update(delivery['id'],status='cancelled',comment='外部状态在规划期间变化；未绑定执行，保留草案证据。')
     if store:store.selection(lane,'blocked',str(exc))
     if isinstance(exc,ResearchIncomplete):receipt['research_continuation']=research_brief(report)
     receipt.update(state='cancelled' if isinstance(exc,Conflict) else 'blocked',error=str(exc),failure=({'category':'research_incomplete','retryable':False,'next_action':'核对具体研究缺口、所需产品决定或来源恢复情况，再从处理选题受阻重新规划。'} if isinstance(exc,ResearchIncomplete) else failure(exc)));save(folder/'state.json',receipt)
-    try:b.api('PATCH','/issues/'+task['id'],{'status':'cancelled','comment':str(exc)} if isinstance(exc,Conflict) else blocked_patch('自主规划暂停；无自动重放：'+str(exc)))
+    try:b.update(task['id'],**({'status':'cancelled','comment':str(exc)} if isinstance(exc,Conflict) else blocked_patch('自主规划暂停；无自动重放：'+str(exc))))
     except Exception as sync_exc:
      receipt['board_sync_error']=str(sync_exc)[:2000];save(folder/'state.json',receipt)
     raise
