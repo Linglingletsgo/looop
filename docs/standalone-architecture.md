@@ -75,3 +75,38 @@ The session is skipped when one already exists or the job already holds a live l
 - Immutable bindings, SHA checks, independent review, merge policy, retention.
 - Pause stops new selection; operator stop is respected; no paid fallback.
 - No model call when there is no job.
+
+### Console server (P3)
+
+The standalone console is a Python standard-library server (`bin/console-server.py`) that serves `ui/index.html`, `ui/app.js` and `ui/style.css`, proxies the two existing API routes to `bin/console.py` / `bin/console_actions.py`, and adds its own owner login. The Paperclip-hosted console (`ui/server.mjs`, `bin/install-ui.py`) is unchanged.
+
+1. Set the owner password (minimum 12 characters; never printed):
+   `python3 bin/console-auth.py set-password`
+   This writes `data/console-auth.json` (mode 0600, scrypt N=16384 r=8 p=1, random generation id) and invalidates every existing console session. `python3 bin/console-auth.py status` reports whether a password is set without printing the hash.
+2. Start the server: `python3 bin/console-server.py` (defaults to `127.0.0.1:3120`). Use `--host` / `--port` to override. A non-loopback bind requires a configured password; a loopback bind without one is refused unless `--insecure-local-dev` is passed (login disabled, loopback only, loud warning). The server trusts only `Host` values derived from its configured origins, never the request header: the defaults are `http://127.0.0.1:<port>` and `http://localhost:<port>` (plus `http://[::1]:<port>` for an IPv6 loopback bind). A reverse proxy therefore needs an explicit origin, for example `data/local-settings.json`:
+
+```json
+{"console": {"origins": ["https://box.tailnet.ts.net"]}}
+```
+
+   Any other `Host` gets `421` before routing. POSTs additionally require `Origin` to equal one configured origin. `Secure` cookies are used only for an `https` origin (`X-Forwarded-Proto` is not trusted). Sessions expire after 12 hours idle or 7 days absolute; failed logins are limited to 5 per client address and 30 globally per 15 minutes, reserved before password verification. Changing the password rotates a stored generation, so every session (including a login racing the change) is rejected. Child output is capped at 1 MiB and 60 seconds; header/body reads time out after 15 seconds and at most 16 requests run concurrently (excess gets `503`).
+3. systemd user unit example (not installed by this repository), `~/.config/systemd/user/looop-console.service`:
+
+```
+[Unit]
+Description=looop standalone console
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/looop-refactor
+ExecStart=/usr/bin/python3 %h/projects/looop-refactor/bin/console-server.py
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Then `systemctl --user daemon-reload` and `systemctl --user enable --now looop-console.service`.
+
+Remote access should be added later with Tailscale, not by binding a public interface: `tailscale serve --bg 3120` exposes the loopback console through the tailnet with Tailscale's TLS. Tailscale identity login is a later slice; today the owner password remains the only login method. Do not combine remote exposure with `--insecure-local-dev`.

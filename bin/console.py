@@ -6,6 +6,7 @@ from project_state import Store
 from loop_control import view
 from product_goals import summary as goal_summary
 from planning_intervention import preview as planning_attention
+from tracker import local_mode
 
 LABELS={'idle':'等待有价值的工作','ready':'需求已就绪','waiting':'等待','discovering':'PM 选题中','queued':'排队中','defining':'定义任务','building':'开发中','checking':'检查中','reviewing':'审查中','acceptance':'项目验收','pr_ready':'PR 已就绪','waiting_merge':'等待合并','verifying':'主线复验','completed':'已完成','blocked':'执行受阻','waiting_decision':'等待决定','external_work':'独立开发中','cancelled':'已取消'}
 def read(path,default):
@@ -44,8 +45,11 @@ def status(root=ROOT,companies=()):
   p=read(root/'data'/('quota-'+name+'.json'),None)
   providers.append({'name':name,'state':'cooldown' if p and p.get('resume_at') else 'needs_action' if p else 'available','resume_at':p.get('resume_at') if p else None,'remaining':'unknown'})
  from execution_settings import public
- return {'execution_settings':public(root),'generated_at':time.time(),'projects':projects,'providers':providers}
+ return {'execution_settings':public(root),'generated_at':time.time(),'tracker':'local' if local_mode(root) else 'paperclip','projects':projects,'providers':providers}
 
 if __name__=='__main__':
- from board import Board
- print(json.dumps(status(companies=Board().api("GET","/companies")),ensure_ascii=False))
+ if local_mode(ROOT):result=status(companies=())
+ else:
+  from board import Board
+  result=status(companies=Board().api("GET","/companies"))
+ print(json.dumps(result,ensure_ascii=False))
