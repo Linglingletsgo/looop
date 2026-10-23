@@ -3,6 +3,7 @@ import hashlib,importlib.util,json,pathlib,shutil,subprocess,re
 from runtime import ROOT
 from project_adapter import load,summary
 from roles import resolve,fingerprints
+from role_install import install_default_roles,plan_default_roles
 
 spec=importlib.util.spec_from_file_location('project_profile',ROOT/'bin/project-profile.py');profile=importlib.util.module_from_spec(spec);spec.loader.exec_module(profile)
 
@@ -34,9 +35,11 @@ def preview(repo,projects_root=None):
  if not lane or not lane[0].isalpha():lane='project-'+lane
  local_targets=['.gitignore','AGENTS.md','.agent/project.json','.agent/tools/project-session.py','.agent/tools/project_state.py','.agent/tools/state_revisions.py','.agent/tools/product_goals.py','.agent/tools/lifecycle_io.py','.agent/local/link.json']
  rule_paths+= [n for n in local_targets if (path/n).is_file()]
+ role_plan=plan_default_roles(path,adapter)
  evidence={n:hashlib.sha256((path/n).read_bytes()).hexdigest() for n in sorted(set(rule_paths))}
  result={'suggested_lane':lane,'planned_changes':['.agent/project.json（仅在缺失时创建 context-only 配置）','.agent/tools/（安装独立状态工具，已有不同版本时停止）','.agent/local/（忽略 Git 的项目当前状态）','AGENTS.md / .gitignore（追加简短状态入口与本地状态忽略规则）','Paperclip 观察项目（不创建执行 agent、不启用自动开发）'],'repo':str(path),'name':path.name,'revision':draft['repository_revision'],'tier':draft['profile_tier'],'worktree':worktree,'adapter_present':bool(adapter),'roles':role_list,'workflow':workflow,'checks':checks,'rules':sorted(set(rule_paths)),'references':[n for n in sorted(files) if pathlib.PurePosixPath(n).name.lower() in ('handoff.md','backlog.md','readme.md')][:20],'lockfiles':sorted(n for n in files if pathlib.PurePosixPath(n).name in ('package-lock.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock')),'dependencies':dependencies,'warnings':warnings,'automatic_scheduling':False,'allowed_paths':adapter.get('allowed_paths',[]) if adapter else [],'next_action':'已适配项目可通过项目对话维护当前状态；尚未适配的项目请让 agent 使用 project-adapter skill 完成映射。预览不授予执行或发布权限。'}
- result['fingerprint']=hashlib.sha256(json.dumps({'revision':result['revision'],'evidence':evidence,'roles':fingerprints(registry),'checks':checks,'workflow':workflow},sort_keys=True).encode()).hexdigest()
+ if role_plan:result['planned_changes'].insert(1,'.agent/roles/（补齐缺失的默认角色：'+'、'.join(i['role'] for i in role_plan)+'；只写入不存在的文件，不覆盖项目角色）')
+ result['fingerprint']=hashlib.sha256(json.dumps({'revision':result['revision'],'evidence':evidence,'roles':fingerprints(registry),'checks':checks,'workflow':workflow,'default_roles':role_plan},sort_keys=True).encode()).hexdigest()
  return result
 
 def connect(root,repo,fingerprint,board=None):
@@ -58,7 +61,7 @@ def connect(root,repo,fingerprint,board=None):
    return {'connected':True,'lane':lane,'automatic_scheduling':False}
   for p in cfg['projects'].values():
    if pathlib.Path(p['repo']).resolve()==repo:raise ValueError('该仓库已接入，请使用现有项目。')
-  for name in ('.agent','.agent/local','.agent/local/runtime','.agent/local/runtime/data','.agent/local/runtime/data/project-state','.agent/local/runtime/data/project-state/state.sqlite','.agent/tools','.gitignore','AGENTS.md','.agent/project.json'):
+  for name in ('.agent','.agent/local','.agent/local/runtime','.agent/local/runtime/data','.agent/local/runtime/data/project-state','.agent/local/runtime/data/project-state/state.sqlite','.agent/tools','.agent/roles','.gitignore','AGENTS.md','.agent/project.json'):
    if (repo/name).is_symlink():raise ValueError('接入目标存在符号链接，请在项目对话中核验。')
   link=local/'link.json'
   if link.exists():
@@ -87,8 +90,13 @@ def connect(root,repo,fingerprint,board=None):
     receipt['phase']='creating_project';save(journal,receipt)
     found=b.api('POST',path,{'name':value['name'],'description':marker,'status':'planned','workspace':{'name':lane,'cwd':str(repo),'isPrimary':True}})
    receipt.update(project=found['id'],phase='project_ready');save(journal,receipt)
-  adapter_path=repo/'.agent/project.json'
-  if not adapter_path.exists():save(adapter_path,{'version':1,'role_discovery':'auto','roles':{},'rules':{'common':[],'reference':value['references']},'workflow':value['workflow'],'allowed_paths':[],'checks':value['checks'],'execution_enabled':False})
+  adapter_path=repo/'.agent/project.json';created=not adapter_path.exists()
+  if created:save(adapter_path,{'version':1,'role_discovery':'auto','roles':{},'rules':{'common':[],'reference':value['references']},'workflow':value['workflow'],'allowed_paths':[],'checks':value['checks'],'execution_enabled':False})
+  installed_roles=None
+  if created:
+   # Roles are optional: a failure is reported, never blocks connecting (run the CLI later).
+   try:installed_roles=install_default_roles(repo)
+   except Exception as exc:installed_roles={'error':str(exc)[:500]}
   (repo/'.agent/tools').mkdir(parents=True,exist_ok=True)
   for name,source in tool_sources.items():
    target=repo/'.agent/tools'/name
@@ -104,4 +112,4 @@ def connect(root,repo,fingerprint,board=None):
   cfg['projects'][lane]={'id':receipt['project'],'company':receipt['company'],'repo':str(repo),'integration':'observe','name':value['name']};save(root/'data/control.json',cfg)
   (root/'data/project-state/enabled').touch()
   receipt['phase']='connected';save(journal,receipt)
-  return {'connected':True,'lane':lane,'automatic_scheduling':False,'message':'已接入当前状态。独立对话可读写同一状态；没有创建执行 agent，也没有启用自动开发。'}
+  return {'connected':True,'lane':lane,'automatic_scheduling':False,'default_roles':installed_roles,'message':'已接入当前状态。独立对话可读写同一状态；没有创建执行 agent，也没有启用自动开发。'}

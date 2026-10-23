@@ -9,6 +9,8 @@ Inspect the project's native AGENTS instructions, role/workflow files, HANDOFF/b
 
 Create `.agent/project.json` using the existing adapter schema: version=1, role_discovery, roles, rules, workflow, allowed_paths and checks. Map existing rules rather than duplicating them. Use build → review by default; add explicit project-required roles only. Keep native AGENTS effective. Runtime tools/checks must actually be supported; report missing system requirements. A manifest is not permission to execute or publish.
 
+After `.agent/project.json` exists, if the project lacks roles, run looop's `python3 bin/install-default-roles.py --repo <project>` to preview the missing default roles, then add `--apply` to write them as project-owned, editable files under `.agent/roles/` mapped in `roles`. Project roles and existing files are never overwritten. Installed roles become project roles, so stored role baselines (delivery/autonomy policies) must be re-reviewed afterwards.
+
 Copy `assets/project-session.py` `assets/project_state.py` `assets/state_revisions.py` `assets/product_goals.py` and `assets/lifecycle_io.py` into `.agent/tools/`. These files are self-contained Python standard-library code. Add `.agent/local/` to the project's ignore rules without replacing existing entries. It holds machine bindings, cached state and pending events; do not commit it or credentials. Keep portable rules/tools and concise durable product decisions available with the project. Current state is primary; event history is bounded by the scheduler retention policy. Do not append logs, transcripts or repeated handoff documents to project state. Migrate existing HANDOFF conclusions once as context; do not invent runtime completion from historical prose.
 
 Initialize state:
