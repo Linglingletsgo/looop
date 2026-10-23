@@ -1,11 +1,13 @@
 """Recover provably dead workers before publication; no time-based termination."""
-import json,pathlib,fcntl
+import json,fcntl
 from process_owner import alive
 from project_state import configured_store
 from recovery import prepare
 from lifecycle import save
+from tracker import as_tracker
 
-def reconcile(root,board):
+def reconcile(root,tracker):
+ tracker=as_tracker(tracker,root);local=tracker.name=='local'
  results=[];cfg=json.loads((root/'data/control.json').read_text())
  lock=root/'data/locks/restart-recovery';lock.parent.mkdir(parents=True,exist_ok=True)
  with lock.open('w') as handle:
@@ -18,10 +20,10 @@ def reconcile(root,board):
     state=json.loads(receipt.read_text());stage=state['state']
     if stage not in ('planning','building','checking','acceptance','pr_ready') and not stage.startswith('review_'):continue
     if alive(state.get('owner')) is not False:continue
-    issue=board.api('GET','/issues/'+path.stem)
-    agent=cfg['agents'].get(lane+':delivery');project=cfg['projects'].get(lane,{})
-    if issue.get('projectId')!=project.get('id') or not agent:continue
-    if issue['status'] not in ('todo','in_progress') or issue.get('assigneeAgentId')!=agent:continue
+    issue=tracker.get(path.stem)
+    agent=None if local else cfg['agents'].get(lane+':delivery')
+    if issue.get('lane')!=lane or not local and not agent:continue
+    if issue['status'] not in ('todo','in_progress') or not tracker.assignee_is(issue,lane+':delivery'):continue
     store=configured_store(root)
     if store:store.project_guard(lane)
     if stage=='pr_ready' or state.get('pr_url') or d.get('interruption_retries',0)>=2:
@@ -29,11 +31,12 @@ def reconcile(root,board):
      continue
     archive=prepare(root,path.stem,'Confirmed dead worker; restart with all gates',interrupted=True)
     results.append({'job':path.stem,'state':'requeued','evidence':str(archive)})
-    board.api('PATCH','/issues/'+path.stem,{'status':'todo','assigneeAgentId':agent,'assigneeUserId':None})
+    tracker.update(path.stem,status='todo',assignee=lane+':delivery')
    except Exception as exc:results.append({'job':path.stem,'state':'deferred','reason':str(exc)})
  save(root/'data/restart-recovery-status.json',{'results':results})
  return results
 
 if __name__=='__main__':
  from board import ROOT,Board
- print(json.dumps(reconcile(ROOT,Board()),ensure_ascii=False))
+ from tracker import open_tracker
+ print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))

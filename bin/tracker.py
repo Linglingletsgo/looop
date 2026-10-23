@@ -2,6 +2,8 @@
 import json,pathlib
 from jobs import Jobs,KINDS
 UNSET=object()
+# Sentinel for update(): clear the agent assignment, leave the human owner alone.
+CLEAR_AGENT=object()
 
 def _config(root):
  try:value=json.loads((pathlib.Path(root)/'data/control.json').read_text())
@@ -9,9 +11,10 @@ def _config(root):
  return value if isinstance(value,dict) else {}
 
 class PaperclipTracker:
+ name='paperclip'
  idempotent_create=False
- def __init__(self,board,root):
-  self.board=board;self.root=pathlib.Path(root);cfg=_config(root);self.session=None
+ def __init__(self,board,root,cfg=None):
+  self.board=board;self.root=pathlib.Path(root);cfg=_config(root) if cfg is None else cfg;self.session=None
   projects=cfg.get('projects') or {}
   self.projects={k:v['id'] for k,v in projects.items() if (v or {}).get('id')}
   self.agents=cfg.get('agents') or {}
@@ -23,11 +26,22 @@ class PaperclipTracker:
   # 'lane:role' keys must be configured; anything else is a legacy raw agent id.
   if ':' in key and key not in self.agents:raise KeyError('No agent configured for role '+key)
   return self.agents.get(key,key)
+ def assigned(self,lane,role,statuses):
+  statuses=(statuses,) if isinstance(statuses,str) else tuple(statuses)
+  path=f'/companies/{self.companies[lane]}/issues?assigneeAgentId={self._agent(role)}&status='+','.join(statuses)
+  return [self._issue(row) for row in self.board.api('GET',path) or [] if row.get('projectId')==self.projects[lane] and row['status'] in statuses]
+ def agent_of(self,issue):
+  value=(issue or {}).get('assignee')
+  return None if value in (None,'owner') else value
+ def assignee_is(self,issue,role):
+  return self.agent_of(issue)==self._role(self._agent(role))
+ def agent_assigned(self,issue):
+  return self.agent_of(issue) is not None
  def _issue(self,value,lane=None):
   value=value or {};project=value.get('projectId')
   return {'id':value.get('id'),'identifier':value.get('identifier'),
    'lane':self.lanes.get(project) if project else None,'status':value.get('status'),
-   'assignee':'owner' if value.get('assigneeUserId') else self._role(value.get('assigneeAgentId')),
+   'assignee':self._role(value.get('assigneeAgentId')) if value.get('assigneeAgentId') else 'owner' if value.get('assigneeUserId') else None,
    'description':value.get('description') or ''}
  def owner(self):
   if self.session is None:self.session=self.board.api('GET','/auth/get-session')['user']['id']
@@ -40,12 +54,13 @@ class PaperclipTracker:
   elif assignee:payload.update(assigneeAgentId=self._agent(assignee),assigneeUserId=None)
   response=self.board.api('POST',f'/companies/{company or self.companies[lane]}/issues',payload) or {}
   return self._issue({**payload,**response})
- def update(self,id,status=None,assignee=UNSET,comment=None,description=None,unblockDescriptor=None):
+ def update(self,id,status=None,assignee=UNSET,comment=None,description=None,unblockDescriptor=None,owner_id=None):
   payload={}
   if status is not None:payload['status']=status
-  if assignee is not UNSET:
+  if assignee is CLEAR_AGENT:payload['assigneeAgentId']=None
+  elif assignee is not UNSET:
    payload.update(assigneeAgentId=None if assignee in (None,'owner') else self._agent(assignee),
-    assigneeUserId=self.owner() if assignee=='owner' else None)
+    assigneeUserId=owner_id if assignee=='owner' and owner_id is not None else self.owner() if assignee=='owner' else None)
   if comment is not None:payload['comment']=comment
   if description is not None:payload['description']=description
   if unblockDescriptor is not None:payload['unblockDescriptor']=unblockDescriptor
@@ -61,6 +76,7 @@ class PaperclipTracker:
   self._agent(key)
 
 class LocalTracker:
+ name='local'
  idempotent_create=True
  def __init__(self,jobs,root):
   self.jobs=jobs;self.root=pathlib.Path(root)
@@ -72,15 +88,26 @@ class LocalTracker:
   return job
  def create(self,lane,kind,title,status,description='',assignee=None,job_id=None,company=None):
   return self.jobs.create(lane,kind,title,description=description,status=status,assignee=assignee,job_id=job_id)
- def update(self,id,status=None,assignee=UNSET,comment=None,description=None,unblockDescriptor=None):
+ def update(self,id,status=None,assignee=UNSET,comment=None,description=None,unblockDescriptor=None,owner_id=None):
   changes={}
   if status is not None:changes['status']=status
-  if assignee is not UNSET:changes['assignee']=assignee
+  if assignee is CLEAR_AGENT:changes['assignee']=None
+  elif assignee is not UNSET:changes['assignee']=assignee
   if comment is not None:changes['comment']=comment
   if unblockDescriptor is not None:
    changes['comment']=(changes.get('comment') or '')+'\nunblock: '+json.dumps(unblockDescriptor,ensure_ascii=False)
   if description is not None:changes['description']=description
   return self.jobs.update(id,**changes)
+ def assigned(self,lane,role,statuses):
+  statuses=(statuses,) if isinstance(statuses,str) else tuple(statuses)
+  return self.jobs.list(lane=lane,status=statuses,assignee=role)
+ def agent_of(self,issue):
+  value=(issue or {}).get('assignee')
+  return None if value in (None,'owner') else value
+ def assignee_is(self,issue,role):
+  return self.agent_of(issue)==role
+ def agent_assigned(self,issue):
+  return self.agent_of(issue) is not None
  def find(self,lane,marker,company=None,project=None):
   return [job for job in self.jobs.list(lane=lane) if marker in (job.get('description') or '')]
  def require_role(self,key):
@@ -89,13 +116,16 @@ class LocalTracker:
  def role_running(self,key):
   lane,_,kind=key.partition(':')
   if not lane or kind not in KINDS:return False
-  return any(self.jobs.holder(job['id']) is not None for job in self.jobs.list(lane=lane,kind=kind,status='in_progress'))
+  return any(self.jobs.holder(job['id']) is not None for job in self.jobs.list(lane=lane,kind=kind,status=('todo','in_progress')))
+
+def local_mode(root):
+ try:value=json.loads((pathlib.Path(root)/'data/local-settings.json').read_text())
+ except (OSError,ValueError):value=None
+ return isinstance(value,dict) and value.get('tracker')=='local'
 
 def as_tracker(tracker,root):
  return PaperclipTracker(tracker,root) if hasattr(tracker,'api') else tracker
 
-def open_tracker(root,board_factory):
- try:value=json.loads((pathlib.Path(root)/'data/local-settings.json').read_text())
- except (OSError,ValueError):value=None
- if isinstance(value,dict) and value.get('tracker')=='local':return LocalTracker(Jobs(root),root)
- return PaperclipTracker(board_factory(),root)
+def open_tracker(root,board_factory,cfg=None):
+ if local_mode(root):return LocalTracker(Jobs(root),root)
+ return PaperclipTracker(board_factory(),root,cfg)

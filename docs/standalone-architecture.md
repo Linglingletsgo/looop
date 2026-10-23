@@ -46,7 +46,7 @@ Creation is local and atomic, so the `binding-request.json` "posting / unknown r
 
 ## Tracker seam during migration
 
-Planning call sites use the `tracker` seam (`bin/tracker.py`), never `Board`: `PaperclipTracker` (default) maps lanes/roles through `data/control.json` and keeps the current HTTP calls unchanged; `LocalTracker` uses `jobs.Jobs`. `data/local-settings.json` `{"tracker": "local"}` opts in; missing or invalid settings stay on Paperclip. A `PaperclipMirror` (optional `{"mirror": {"paperclip": true}}`) may replay job events to Paperclip from `state-sync.py`; default off. Removing Paperclip = leaving the mirror off and deleting the mirror module.
+Planning and delivery call sites use the `tracker` seam (`bin/tracker.py`), never `Board`: `PaperclipTracker` (default) maps lanes/roles through `data/control.json` and keeps the current HTTP calls unchanged; `LocalTracker` uses `jobs.Jobs`. `data/local-settings.json` `{"tracker": "local"}` opts in; missing or invalid settings stay on Paperclip. In local mode there is no Paperclip agent to import usage for, so `delivery-worker.py` and `health.py` skip cost events (usage stays in run receipts) and `delivery-control.py configure` writes the policy without creating an agent. A `PaperclipMirror` (optional `{"mirror": {"paperclip": true}}`) may replay job events to Paperclip from `state-sync.py`; default off. Removing Paperclip = leaving the mirror off and deleting the mirror module.
 
 ## Slices
 
@@ -58,6 +58,16 @@ Planning call sites use the `tracker` seam (`bin/tracker.py`), never `Board`: `P
 - **P3** console server (Python stdlib), login: loopback default, scrypt owner password, optional `tailscale serve` identity.
 - **P4** de-personalize (lanes, providers, paths, strings into config).
 - **P5** single `looop recover TASK`, package layout.
+
+### Local worker launch (P1c)
+
+`launch_loops.py` runs on the short timer. In local mode, for each lane with `data/delivery-policies/<lane>.json` and a `todo` delivery job assigned to `<lane>:delivery`, it starts one detached tmux session `looop-delivery-<lane>`:
+
+```
+/usr/bin/python3 <root>/bin/delivery-worker.py <lane> >> logs/delivery-<lane>.log 2>&1
+```
+
+The session is skipped when one already exists or the job already holds a live lease. Planning pause does not gate this: an already bound Packet keeps running, exactly like the Paperclip heartbeat did. The worker handles one pass and exits, so the timer re-launches it on the next tick. Paperclip mode starts no delivery sessions; the Paperclip agent heartbeat still runs the same worker.
 
 ## Invariants (unchanged by the refactor)
 
