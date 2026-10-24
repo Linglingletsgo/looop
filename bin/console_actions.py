@@ -40,7 +40,7 @@ def execute(value,root=ROOT):
  if action in ('preview','connect'):
   from onboarding import preview,connect
   if action=='connect':return connect(root,value['repo'],value['fingerprint'])
-  return preview(value['repo'])
+  return preview(value['repo'],root=root)
  lane=valid_lane(value.get('lane'));store=Store(root)
  if lane not in json.loads((root/'data/control.json').read_text())['projects']:raise ValueError('Unknown project')
  if action=='activation_preview':
@@ -77,7 +77,8 @@ def execute(value,root=ROOT):
  if action=='retry_planning_attempt':
   from planning_intervention import retry as retry_pm
   from board import Board
-  result=retry_pm(root,lane,value.get('job'),value.get('reason',''),revision,Board())
+  from tracker import open_tracker
+  result=retry_pm(root,lane,value.get('job'),value.get('reason',''),revision,open_tracker(root,Board))
   from launch_loops import launch
   launch(root,lane)
   return result

@@ -5,7 +5,6 @@ Status: plan. Every step below needs explicit operator approval at the time it i
 ## Preconditions
 
 - `refactor/standalone` merged to `main` after review; full test suite passes on the live checkout.
-- Slice P1c+ done: `state-sync.py` (Paperclip mirror), `console.py` (company list) and `onboarding.py` (company/project creation) do not call Paperclip in local mode.
 - No delivery in flight: no `data/deliveries/*/state.json` with an active state and a live owner; no `looop-loop-*` / `looop-delivery-*` tmux session running; the latest migration dry run shows no `todo`/`in_progress` delivery (2026-10-23: 37 done, 1 blocked, none active).
 - GTP loop stays paused (`loop_control.mode` paused). The cutover does not resume it.
 
@@ -39,6 +38,8 @@ Possible as long as no job was created or changed in local mode after step 6:
 3. Resume the Paperclip delivery agents and start the timers.
 
 After local-mode jobs exist, Paperclip no longer reflects them; rolling back then needs a reverse sync, which is not implemented. Decide before step 8 whether to keep going.
+
+In local mode `state-sync.py` acknowledges the project-state outbox without mirroring to Paperclip, so after switching back the board stays stale until the next state change, which then mirrors the full current snapshot (existing issues are matched by marker, so no duplicates).
 
 ## After cutover (P1e)
 

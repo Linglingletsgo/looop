@@ -4,10 +4,12 @@ from runtime import ROOT
 from project_adapter import load,summary
 from roles import resolve,fingerprints
 from role_install import install_default_roles,plan_default_roles
+from tracker import local_mode
 
 spec=importlib.util.spec_from_file_location('project_profile',ROOT/'bin/project-profile.py');profile=importlib.util.module_from_spec(spec);spec.loader.exec_module(profile)
 
-def preview(repo,projects_root=None):
+def preview(repo,projects_root=None,root=None):
+ root=ROOT if root is None else pathlib.Path(root)
  base=pathlib.Path(projects_root or pathlib.Path.home()/'projects').resolve();path=pathlib.Path(repo).expanduser().resolve(strict=True)
  if path==base or not path.is_relative_to(base):raise ValueError('请选择 Linux ~/projects 下的项目目录。')
  actual=pathlib.Path(profile.git(path,'rev-parse','--show-toplevel').decode().strip()).resolve()
@@ -37,7 +39,7 @@ def preview(repo,projects_root=None):
  rule_paths+= [n for n in local_targets if (path/n).is_file()]
  role_plan=plan_default_roles(path,adapter)
  evidence={n:hashlib.sha256((path/n).read_bytes()).hexdigest() for n in sorted(set(rule_paths))}
- result={'suggested_lane':lane,'planned_changes':['.agent/project.json（仅在缺失时创建 context-only 配置）','.agent/tools/（安装独立状态工具，已有不同版本时停止）','.agent/local/（忽略 Git 的项目当前状态）','AGENTS.md / .gitignore（追加简短状态入口与本地状态忽略规则）','Paperclip 观察项目（不创建执行 agent、不启用自动开发）'],'repo':str(path),'name':path.name,'revision':draft['repository_revision'],'tier':draft['profile_tier'],'worktree':worktree,'adapter_present':bool(adapter),'roles':role_list,'workflow':workflow,'checks':checks,'rules':sorted(set(rule_paths)),'references':[n for n in sorted(files) if pathlib.PurePosixPath(n).name.lower() in ('handoff.md','backlog.md','readme.md')][:20],'lockfiles':sorted(n for n in files if pathlib.PurePosixPath(n).name in ('package-lock.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock')),'dependencies':dependencies,'warnings':warnings,'automatic_scheduling':False,'allowed_paths':adapter.get('allowed_paths',[]) if adapter else [],'next_action':'已适配项目可通过项目对话维护当前状态；尚未适配的项目请让 agent 使用 project-adapter skill 完成映射。预览不授予执行或发布权限。'}
+ result={'suggested_lane':lane,'planned_changes':['.agent/project.json（仅在缺失时创建 context-only 配置）','.agent/tools/（安装独立状态工具，已有不同版本时停止）','.agent/local/（忽略 Git 的项目当前状态）','AGENTS.md / .gitignore（追加简短状态入口与本地状态忽略规则）','本地任务队列（不创建公司/项目，不启用自动开发）' if local_mode(root) else 'Paperclip 观察项目（不创建执行 agent、不启用自动开发）'],'repo':str(path),'name':path.name,'revision':draft['repository_revision'],'tier':draft['profile_tier'],'worktree':worktree,'adapter_present':bool(adapter),'roles':role_list,'workflow':workflow,'checks':checks,'rules':sorted(set(rule_paths)),'references':[n for n in sorted(files) if pathlib.PurePosixPath(n).name.lower() in ('handoff.md','backlog.md','readme.md')][:20],'lockfiles':sorted(n for n in files if pathlib.PurePosixPath(n).name in ('package-lock.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock')),'dependencies':dependencies,'warnings':warnings,'automatic_scheduling':False,'allowed_paths':adapter.get('allowed_paths',[]) if adapter else [],'next_action':'已适配项目可通过项目对话维护当前状态；尚未适配的项目请让 agent 使用 project-adapter skill 完成映射。预览不授予执行或发布权限。'}
  if role_plan:result['planned_changes'].insert(1,'.agent/roles/（补齐缺失的默认角色：'+'、'.join(i['role'] for i in role_plan)+'；只写入不存在的文件，不覆盖项目角色）')
  result['fingerprint']=hashlib.sha256(json.dumps({'revision':result['revision'],'evidence':evidence,'roles':fingerprints(registry),'checks':checks,'workflow':workflow,'default_roles':role_plan},sort_keys=True).encode()).hexdigest()
  return result
@@ -48,7 +50,7 @@ def connect(root,repo,fingerprint,board=None):
  from project_state import Store
  from lifecycle import save
  from board import Board
- root=pathlib.Path(root);value=preview(repo)
+ root=pathlib.Path(root);standalone=local_mode(root);value=preview(repo)
  if value['fingerprint']!=fingerprint:raise ValueError('项目文件已变化，请重新预览。')
  if value['worktree']:raise ValueError('关联 worktree 不作为自动开发项目；请选择主仓库。')
  repo=pathlib.Path(value['repo']);lane=value['suggested_lane'];local=repo/'.agent/local';runtime=local/'runtime'
@@ -73,23 +75,27 @@ def connect(root,repo,fingerprint,board=None):
    if target.exists() and (target.is_symlink() or target.read_bytes()!=source.read_bytes()):raise ValueError('项目工具已有不同版本；请在项目对话中审核升级。')
   local.mkdir(parents=True,exist_ok=True);journal=local/'onboarding.json'
   receipt=json.loads(journal.read_text()) if journal.exists() else {'lane':lane,'phase':'prepared'}
-  marker='looop-observe:'+hashlib.sha256(str(repo).encode()).hexdigest()[:24];b=board or Board()
-  # Side effects are journaled before POST. If a connection is lost, only reconcile a marker.
-  if not receipt.get('company'):
-   found=next((c for c in b.api('GET','/companies') if marker in (c.get('description') or '')),None)
-   if not found:
-    if receipt['phase']=='creating_company':raise ValueError('组织创建结果未知，请稍后重新核验；不会重复创建。')
-    receipt['phase']='creating_company';save(journal,receipt)
-    found=b.api('POST','/companies',{'name':value['name'],'description':marker+' / context only; no agents or execution'})
-   receipt.update(company=found['id'],phase='company_ready');save(journal,receipt)
-  if not receipt.get('project'):
-   path='/companies/'+receipt['company']+'/projects'
-   found=next((p for p in b.api('GET',path) if marker in (p.get('description') or '')),None)
-   if not found:
-    if receipt['phase']=='creating_project':raise ValueError('项目创建结果未知，请稍后重新核验；不会重复创建。')
-    receipt['phase']='creating_project';save(journal,receipt)
-    found=b.api('POST',path,{'name':value['name'],'description':marker,'status':'planned','workspace':{'name':lane,'cwd':str(repo),'isPrimary':True}})
-   receipt.update(project=found['id'],phase='project_ready');save(journal,receipt)
+  if standalone:
+   # No Paperclip company/project in local mode; ids stay null for every consumer.
+   receipt.update(company=None,project=None,phase='project_ready',tracker='local');save(journal,receipt)
+  else:
+   marker='looop-observe:'+hashlib.sha256(str(repo).encode()).hexdigest()[:24];b=board or Board()
+   # Side effects are journaled before POST. If a connection is lost, only reconcile a marker.
+   if not receipt.get('company'):
+    found=next((c for c in b.api('GET','/companies') if marker in (c.get('description') or '')),None)
+    if not found:
+     if receipt['phase']=='creating_company':raise ValueError('组织创建结果未知，请稍后重新核验；不会重复创建。')
+     receipt['phase']='creating_company';save(journal,receipt)
+     found=b.api('POST','/companies',{'name':value['name'],'description':marker+' / context only; no agents or execution'})
+    receipt.update(company=found['id'],phase='company_ready');save(journal,receipt)
+   if not receipt.get('project'):
+    path='/companies/'+receipt['company']+'/projects'
+    found=next((p for p in b.api('GET',path) if marker in (p.get('description') or '')),None)
+    if not found:
+     if receipt['phase']=='creating_project':raise ValueError('项目创建结果未知，请稍后重新核验；不会重复创建。')
+     receipt['phase']='creating_project';save(journal,receipt)
+     found=b.api('POST',path,{'name':value['name'],'description':marker,'status':'planned','workspace':{'name':lane,'cwd':str(repo),'isPrimary':True}})
+    receipt.update(project=found['id'],phase='project_ready');save(journal,receipt)
   adapter_path=repo/'.agent/project.json';created=not adapter_path.exists()
   if created:save(adapter_path,{'version':1,'role_discovery':'auto','roles':{},'rules':{'common':[],'reference':value['references']},'workflow':value['workflow'],'allowed_paths':[],'checks':value['checks'],'execution_enabled':False})
   installed_roles=None
@@ -109,7 +115,8 @@ def connect(root,repo,fingerprint,board=None):
   if not link.exists():save(link,{'runtime':str(runtime),'lane':lane});save(local/'pending.json',[])
   save(local/'snapshot.json',Store(runtime).context(lane))
   locations=root/'data/project-state/locations.json';routes=json.loads(locations.read_text()) if locations.exists() else {};routes[lane]=str(Store(runtime).path);save(locations,routes)
-  cfg['projects'][lane]={'id':receipt['project'],'company':receipt['company'],'repo':str(repo),'integration':'observe','name':value['name']};save(root/'data/control.json',cfg)
+  entry={'repo':str(repo),'integration':'observe','name':value['name']}
+  cfg['projects'][lane]={'id':None,'company':None,**entry} if standalone else {'id':receipt['project'],'company':receipt['company'],**entry};save(root/'data/control.json',cfg)
   (root/'data/project-state/enabled').touch()
   receipt['phase']='connected';save(journal,receipt)
   return {'connected':True,'lane':lane,'automatic_scheduling':False,'default_roles':installed_roles,'message':'已接入当前状态。独立对话可读写同一状态；没有创建执行 agent，也没有启用自动开发。'}

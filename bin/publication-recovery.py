@@ -34,4 +34,5 @@ def reconcile(root,board):
  save(root/'data/publication-recovery-status.json',{'results':results});return results
 if __name__=='__main__':
  from board import ROOT,Board
- print(json.dumps(reconcile(ROOT,Board()),ensure_ascii=False))
+ from tracker import open_tracker
+ print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))

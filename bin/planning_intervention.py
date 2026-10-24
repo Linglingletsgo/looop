@@ -6,6 +6,12 @@ from process_owner import alive
 from project_state import Store,Conflict
 
 TERMINAL={'queued','no_work','rejected','cancelled'}
+_MISSING_JOB='该 PM 任务不在本地任务表中（可能未迁移）；请先运行迁移或在维护对话中核对。'
+def missing_job(tracker,issue):
+ # A local attempt whose PM issue was never migrated has no job row; Paperclip keeps its own lookup errors.
+ jobs=getattr(tracker,'jobs',None)
+ return getattr(tracker,'name',None)=='local' and jobs is not None and jobs.get(issue) is None
+
 def unresolved(root,lane):
  result=[]
  for path in (root/'data/autonomy'/lane).glob('*/state.json'):
@@ -37,6 +43,8 @@ def retry(root,lane,job,reason,expected,tracker):
   if not item or not item['retry_allowed']:raise ValueError('该规划不能直接重试，请刷新并核对进程与绑定状态。')
   path=root/'data/autonomy'/lane/job/'state.json';state=json.loads(path.read_text())
   if state.get('issue'):
+   # Refuse before any state change; the console surfaces this ValueError as the reason.
+   if missing_job(tracker,state['issue']):raise ValueError(_MISSING_JOB)
    issue=tracker.get(state['issue'])
    if issue['lane']!=lane or issue['status'] not in ('in_progress','blocked','cancelled'):raise ValueError('PM 任务状态不匹配，需要先核对。')
    tracker.update(state['issue'],status='cancelled',comment='人工核验后重新规划，原提案保留：'+reason[:2000])

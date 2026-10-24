@@ -32,6 +32,7 @@ class ExternalWork(unittest.TestCase):
   class Board:
    def __init__(self):self.issues=[];self.posts=0
    def api(self,method,path,data=None):
+    if path=='/auth/get-session':return {'user':{'id':'owner'}}
     if method=='GET':return self.issues
     if method=='POST':self.posts+=1;issue={'id':'issue-one',**data};self.issues.append(issue);return issue
     if method=='PATCH':self.issues[0].update(data);return self.issues[0]
