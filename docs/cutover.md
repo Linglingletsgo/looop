@@ -1,6 +1,6 @@
 # Cutover: Paperclip tracker → local jobs
 
-Status: plan. Every step below needs explicit operator approval at the time it is run. Nothing here is permission by itself.
+Status: executed on the live install (steps 1–9). Kept as the procedure for other installs; every step needs explicit operator approval at the time it is run. Nothing here is permission by itself.
 
 ## Preconditions
 
@@ -14,7 +14,7 @@ Status: plan. Every step below needs explicit operator approval at the time it i
 2. **Pause the Paperclip delivery agents** (`<lane>:delivery` in `data/control.json` `agents`) in the Paperclip UI, so the heartbeat cannot start `delivery-worker.py` while the tracker changes. (In local mode the worker would read local jobs; leases prevent double execution, but no second launcher is wanted.)
 3. **Back up runtime state** (not the Paperclip DB): `tar -C data -cf data/backups/cutover-<UTC>.tar control.json local-settings.json delivery-bindings deliveries autonomy delivery-policies autonomy-policies loop-dashboard project-state operator-requests` (only existing paths).
 4. **Migration dry run with board overlay:** `python3 scripts/migrate-jobs.py --board`. Check `errors`, `conflicts`, `board_error`, `orphans` and every row whose `board.result` is `board_differs`. A `board_error` for a 401 means signing in to Paperclip first.
-5. **Apply:** `python3 scripts/migrate-jobs.py --apply --board`. Exit 0 and `counts.created` equal to the dry run's `planned` (minus skipped `board_error`s) is expected. Re-run the dry run: every row must be `existing`.
+5. **Apply:** `python3 scripts/migrate-jobs.py --apply --board`. Exit 0 and `counts.created` equal to the dry run's `planned` (minus skipped `board_error`s) is expected. A dry run never reads `data/jobs.sqlite` and always reports `planned`; verify instead by re-running `--apply --board` (every row `existing`, nothing created) or by comparing `data/jobs.sqlite` with the dry-run rows.
 6. **Switch settings** in `data/local-settings.json` (keep `board_url`):
    ```json
    {"board_url": "...", "tracker": "local", "pm_skills": {"noncommercial": true}}

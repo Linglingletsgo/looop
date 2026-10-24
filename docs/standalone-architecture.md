@@ -100,8 +100,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/projects/looop-refactor
-ExecStart=/usr/bin/python3 %h/projects/looop-refactor/bin/console-server.py
+WorkingDirectory=%h/projects/looop
+ExecStart=/usr/bin/python3 %h/projects/looop/bin/console-server.py
 Restart=on-failure
 
 [Install]
@@ -110,4 +110,4 @@ WantedBy=default.target
 
 Then `systemctl --user daemon-reload` and `systemctl --user enable --now looop-console.service`.
 
-Remote access should be added later with Tailscale, not by binding a public interface: `tailscale serve --bg 3120` exposes the loopback console through the tailnet with Tailscale's TLS. Tailscale identity login is a later slice; today the owner password remains the only login method. Do not combine remote exposure with `--insecure-local-dev`.
+Remote access uses Tailscale, not a public bind: `tailscale serve --bg --https=<port> http://127.0.0.1:3120` exposes the loopback console on the tailnet with Tailscale's TLS (pick a port not already served; serve needs root or `tailscale set --operator`). Add the resulting `https://<host>.ts.net:<port>` to `console.origins`, otherwise every request gets `421`. Tailscale identity login is a later slice; today the owner password remains the only login method. Do not combine remote exposure with `--insecure-local-dev`.
