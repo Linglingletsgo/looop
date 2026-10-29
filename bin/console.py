@@ -40,8 +40,8 @@ def status(root=ROOT):
  from execution_settings import read as read_settings
  selected=set(read_settings(root).get('routes',{}).values())
  providers=[]
- for name in ('codex','commandcode','claude_subscription','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'):
-  if name in ('claude_subscription','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool') and name not in selected and not (root/'data'/('quota-'+name+'.json')).exists():continue
+ for name in ('codex','commandcode','claude_subscription','dsh_profile','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'):
+  if name in ('claude_subscription','dsh_profile','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool') and name not in selected and not (root/'data'/('quota-'+name+'.json')).exists():continue
   p=read(root/'data'/('quota-'+name+'.json'),None)
   providers.append({'name':name,'state':'cooldown' if p and p.get('resume_at') else 'needs_action' if p else 'available','resume_at':p.get('resume_at') if p else None,'remaining':'unknown'})
  from execution_settings import public

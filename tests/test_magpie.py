@@ -24,6 +24,9 @@ class Magpie(unittest.TestCase):
    for provider in magpie.PLANS:
     for harness in sandbox.HARNESS_IDS:
      scratch=pathlib.Path(d)/(provider+harness);scratch.mkdir()
+     if harness=='dsh':
+      with self.assertRaises(ValueError):sandbox.invocation(pathlib.Path(d),scratch,{'harness':harness,'provider':provider})
+      continue
      argv,env,model=sandbox.invocation(pathlib.Path(d),scratch,{'harness':harness,'provider':provider})
      self.assertEqual(argv[0],harness);self.assertNotIn('private-fixture',' '.join(argv))
      if harness=='claude':

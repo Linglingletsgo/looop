@@ -3,9 +3,11 @@ import contextlib,json,os,pathlib,re,shutil,signal,subprocess,threading,tomllib
 from runtime import ROOT
 from provider_state import pause_from_events,paused
 
-HARNESS_IDS=('codex','claude','omp')
-COMPATIBILITY={'codex':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'omp':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'claude':('claude_subscription','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool')}
+HARNESS_IDS=('codex','claude','omp','dsh')
+COMPATIBILITY={'codex':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'omp':('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'claude':('claude_subscription','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'),'dsh':('dsh_profile',)}
 FLASH='deepseek/deepseek-v4.1-flash'
+# HTTP status evidence in harness output; dsh prints its own provider error on stderr at line start, e.g. `dsh: QUOTA: 429: ...`.
+PROVIDER_STATUS=re.compile(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+|API Error: Request rejected \(|^dsh: [A-Z_]+: )(401|402|403|429)\b',re.I|re.M)
 
 def execution_environment():
  """Native jobs and controller checks share installed Linux runtime discovery."""
@@ -51,11 +53,19 @@ def workspace_environment(workspace,dependencies=None,git_metadata=None):
 def invocation(workspace,scratch,execution_route):
  harness=execution_route.get('harness','codex');provider=execution_route['provider']
  if harness not in COMPATIBILITY or provider not in COMPATIBILITY[harness]:raise ValueError('Unsupported Harness / Token Plan combination')
- if not shutil.which(harness):raise RuntimeError('Harness not installed: '+harness)
  env=execution_environment()
+ if not shutil.which(harness,path=env.get('PATH')):raise RuntimeError('Harness not installed: '+harness)
  # Unattended jobs use only the selected subscription, never ambient paid API keys.
  for key in list(env):
   if key.endswith('_API_KEY') or key in ('ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','OPENAI_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'):env.pop(key,None)
+ if harness=='dsh':
+  if provider!='dsh_profile':raise ValueError('Unsupported Harness / Token Plan combination')
+  # The headless profile owns its model route and credential; no key is passed in.
+  env.pop('LOOOP_PROVIDER_KEY',None)
+  # Like the other harnesses (skip-permissions / bypass), the job runs as a trusted user process:
+  # its controller-owned handoff file lives outside the workspace, which workspace-write would deny.
+  env['DSH_PERMISSION_MODE']='danger-full-access'
+  return ['dsh','--profile','headless','--json','-'],env,'dsh:headless'
  if harness=='claude' and provider=='commandcode':
   from commandcode_claude import environment,MODEL
   env=environment(ROOT,env)
@@ -97,7 +107,7 @@ def invocation(workspace,scratch,execution_route):
  return cmd,env,model
 
 def final_text(harness,events):
- result='';usage={'input_tokens':0,'cached_input_tokens':0,'output_tokens':0}
+ result='';usage={'input_tokens':0,'cached_input_tokens':0,'output_tokens':0};dsh_final=False;dsh_failure=False
  for line in events.splitlines():
   try:e=json.loads(line)
   except ValueError:continue
@@ -114,6 +124,21 @@ def final_text(harness,events):
     texts=[b.get('text','') for b in message.get('content',[]) if b.get('type')=='text'];result=''.join(texts)
     u=message.get('usage',{})
     for target,source in [('input_tokens','input'),('output_tokens','output'),('cached_input_tokens','cacheRead')]:usage[target]+=u.get(source,0)
+  if harness=='dsh':
+   kind=e.get('type')
+   if kind=='final':
+    result=e.get('text','') if isinstance(e.get('text'),str) else '';dsh_final=True
+   elif kind=='status' and e.get('phase')=='step_end':
+    u=e.get('usage') if isinstance(e.get('usage'),dict) else {}
+    for target,source in [('input_tokens','inputTokens'),('output_tokens','outputTokens'),('cached_input_tokens','cacheReadTokens')]:
+     value=u.get(source,0)
+     if isinstance(value,(int,float)) and not isinstance(value,bool):usage[target]+=value
+   elif kind=='error':dsh_failure=True
+   elif kind=='status' and e.get('phase')=='turn_end':
+    reason=e.get('reason');reason_kind=reason.get('kind') if isinstance(reason,dict) else reason
+    if reason_kind!='completed':dsh_failure=True
+ # dsh reports provider errors as a non-completed turn followed by an empty final.
+ if harness=='dsh' and dsh_failure and not (dsh_final and result.strip()):raise RuntimeError('DeepSeek Harness failed; inspect owner-only events.jsonl')
  return result,usage
 
 def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex',app_socket=None,git_metadata=None,dependencies=None,execution_route=None,output_schema=None,handoff_schema=None):
@@ -171,7 +196,7 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
  if before is not None and source_fingerprint(workspace)!=before:raise RuntimeError('Read-only Harness modified source; result rejected')
  if thread_error:raise RuntimeError('Harness log collection failed')
  events=tail.decode(errors='replace')
- status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+|API Error: Request rejected \()(401|402|403|429)\b',events,re.I)
+ status=PROVIDER_STATUS.search(events)
  try:result,usage=final_text(harness,events)
  except RuntimeError:
   if status:
@@ -185,7 +210,7 @@ def run(workspace,scratch,prompt,role='product',timeout=None,provider_id='codex'
  (scratch/'usage.json').write_text(json.dumps({'harness':harness,'provider':provider,'model':model,**usage,'remaining':'unknown'},indent=2))
  if proc.returncode or (not result and handoff_identity is None):
   # CLI formats differ; only explicit HTTP status evidence pauses a provider.
-  status=re.search(r'(?:HTTP(?: status)?[ :]+|status(?: code)?[ :=]+|API Error: Request rejected \()(401|402|403|429)\b',events,re.I)
+  status=PROVIDER_STATUS.search(events)
   if status:
    pause_from_events(ROOT,provider,int(status[1]),events);raise RuntimeError('Provider unavailable/quota: HTTP '+status[1]+'; inspect owner-only events.jsonl')
   raise RuntimeError('Harness failed; inspect owner-only events.jsonl')

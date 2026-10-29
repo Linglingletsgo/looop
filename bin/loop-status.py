@@ -24,7 +24,7 @@ def report(lane):
   from loop_control import view
   loop=view(ROOT,lane);m=json.loads(policy.read_text());rows+=['循环模式：'+loop['mode']+'；'+loop.get('reason',''),scope_description(m),('自主发现每天不限次数' if loop['limits']['max_proposals_per_day'] is None else '自主发现每天最多 '+str(loop['limits']['max_proposals_per_day'])+' 次')+'；已确认需求按 urgent/high/normal/low 优先，不占发现额度。仍串行交付并保留范围、额度与审核门禁。']
  from provider_state import paused
- for provider in ('codex','commandcode','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'):
+ for provider in ('codex','commandcode','dsh_profile','magpie_chatgpt','magpie_deepseek','magpie_commandcode','magpie_flash_pool'):
   pause=paused(ROOT,provider)
   rows.append(provider+('：自动等待服务端冷却结束；到期重试原路线' if pause is not None and pause.get('resume_at') else '：需要人工处理认证/额度；无可信恢复时间' if pause is not None else '：可用；剩余额度 unknown'))
  head=ROOT/'data/mainline-verification'/(lane+'.json')
