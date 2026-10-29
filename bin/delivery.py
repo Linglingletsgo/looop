@@ -1,7 +1,7 @@
 """Packet-driven bounded delivery, using explicit per-project execution policies."""
 import fcntl,hashlib,itertools,json,pathlib,re,shutil,subprocess,uuid,time
 from runtime import ROOT
-from repository import git,snapshot
+from repository import git,snapshot,runtime_output
 from executor import command
 from sandbox import run
 from gates import GateError,require_pr,update_target
@@ -48,7 +48,7 @@ def validate(packet,policy):
 def tree(root):
  result={}
  for p in pathlib.Path(root).rglob('*'):
-  if set(p.relative_to(root).parts)&{'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}:continue
+  if runtime_output(p.relative_to(root)):continue
   if p.suffix=='.tsbuildinfo' and not p.is_symlink():continue
   if p.is_symlink():raise GateError('Symlink output refused')
   if p.is_file():result[str(p.relative_to(root))]=hashlib.sha256(p.read_bytes()).hexdigest()

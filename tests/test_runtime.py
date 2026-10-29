@@ -128,6 +128,10 @@ class Runtime(unittest.TestCase):
    root=pathlib.Path(d);(root/'source.ts').write_text('const n = 1');before=source_fingerprint(root);scope=tree(root)
    (root/'web').mkdir();(root/'web/tsconfig.tsbuildinfo').write_text('compiler cache')
    self.assertEqual(source_fingerprint(root),before);self.assertEqual(tree(root),scope)
+   (root/'.agent/local').mkdir(parents=True);(root/'.agent/local/session.lock').write_text('')
+   self.assertEqual(source_fingerprint(root),before);self.assertEqual(tree(root),scope)
+   (root/'.agent/project.json').write_text('{}');self.assertNotEqual(source_fingerprint(root),before);self.assertNotEqual(tree(root),scope)
+   (root/'.agent/project.json').unlink()
    (root/'source.ts').write_text('const n = 2');self.assertNotEqual(source_fingerprint(root),before);self.assertNotEqual(tree(root),scope)
 
  def test_workbuddy_parenthesized_429_is_provider_pause_not_generic_execution_failure(self):

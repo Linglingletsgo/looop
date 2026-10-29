@@ -15,13 +15,18 @@ def snapshot(repo,sha,dest):
    target=dest/member.name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(t.extractfile(member).read());target.chmod(0o755 if member.mode & 0o111 else 0o644)
  return dest
 
+RUNTIME_DIRS={'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}
+def runtime_output(relative):
+ """Caches and the project-local session area (.agent/local, gitignored) are not source."""
+ parts=pathlib.PurePath(relative).parts
+ return bool(set(parts)&RUNTIME_DIRS) or parts[:2]==('.agent','local')
 def source_fingerprint(root):
  """Runtime outputs are not source; existing source changes still invalidate review."""
  import hashlib
  result={}
  for p in pathlib.Path(root).rglob('*'):
   relative=p.relative_to(root)
-  if set(relative.parts)&{'.git','node_modules','.venv','__pycache__','.pytest_cache','.next','dist','build','coverage'}:continue
+  if runtime_output(relative):continue
   if p.suffix=='.tsbuildinfo' and not p.is_symlink():continue
   if p.is_symlink():result[str(relative)]='link:'+str(p.readlink())
   elif p.is_file():result[str(relative)]=hashlib.sha256(p.read_bytes()).hexdigest()
