@@ -70,6 +70,7 @@ def execute(value,root=ROOT):
   intent=store.read(lane)['intents'].get(value.get('intent_id'))
   if not intent:raise ValueError('决定不存在，请刷新。')
   if value.get('resolution') in ('keep_original','follow_up'):command={'type':'resolve_change','intent_id':intent['id'],'resolution':value['resolution'],'human_confirmed':True}
+  elif value.get('resolution')=='satisfied':command={'type':'satisfy','intent_id':intent['id'],'reason':value.get('reason') or intent.get('planning_reason') or '','human_confirmed':True}
   else:
    if value.get('resolution')!='retry_planning':raise ValueError('Unknown decision resolution')
    command={'type':'priority','intent_id':intent['id'],'priority':intent['priority'],'human_confirmed':True}

@@ -139,10 +139,20 @@ CREATE TABLE IF NOT EXISTS links(lane TEXT,item TEXT,issue TEXT NOT NULL,PRIMARY
   if not isinstance(command,dict):raise ValueError('Command object required')
   if len(json.dumps(command,ensure_ascii=False))>32000:raise ValueError('Command too large; sync decisions, not transcript')
   kind=command.get('type')
-  if kind not in ('propose','requirement','decision','priority','change','confirm','resolve_change','supersede_decision'):raise ValueError('External clients can submit intent, not execution transitions or policies')
+  if kind not in ('propose','requirement','decision','priority','change','confirm','resolve_change','supersede_decision','satisfy'):raise ValueError('External clients can submit intent, not execution transitions or policies')
   def apply(doc):
    confirmed=kind not in ('propose',)
    if confirmed and command.get('human_confirmed') is not True:raise ValueError('Explicit human confirmation is required for effective decisions')
+   if kind=='satisfy':
+    # Owner confirms current code already meets a requirement; it leaves selection without a new task.
+    item=doc['intents'].get(command.get('intent_id'))
+    if not item:raise ValueError('Unknown intent')
+    if item['kind'] not in ('requirement','propose') or item['status'] not in ('ready','waiting_decision'):raise ValueError('Only a ready or waiting requirement can be marked satisfied')
+    if any(item['id'] in t.get('intent_ids',[]) and t['phase'] not in ('completed','cancelled') for t in doc['tasks'].values()):raise ValueError('An unfinished task still delivers this requirement')
+    reason=command.get('reason')
+    if not isinstance(reason,str) or not 4<=len(reason.strip())<=2000:raise ValueError('State the evidence that the requirement is met')
+    item.pop('planning_reason',None);item.update(status='completed',satisfied_reason=reason.strip(),satisfied_at=time.time())
+    doc['selection']=None;doc['planning_revision']+=1;return item
    if kind in ('confirm','priority','resolve_change'):
     item=doc['intents'].get(command.get('intent_id'))
     if not item:raise ValueError('Unknown intent')

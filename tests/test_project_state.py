@@ -43,6 +43,19 @@ class State(unittest.TestCase):
   self.s.merge_gate('test','job','sha',lambda:{'state':'MERGED'})
   self.assertEqual(self.s.read('test')['tasks']['job']['phase'],'verifying')
   with self.assertRaises(ValueError):self.submit('change',key='late',target_task='job')
+ def test_owner_can_mark_a_requirement_satisfied_without_a_task(self):
+  i=self.submit()['event']['data']['id'];rev=self.s.read('test')['revision'];plan=self.s.read('test')['planning_revision']
+  with self.assertRaises(ValueError):self.s.submit('test',{'type':'satisfy','intent_id':i,'reason':'main 已交付'},rev,'s0','test')
+  with self.assertRaises(ValueError):self.s.submit('test',{'type':'satisfy','intent_id':i,'human_confirmed':True},rev,'s1','test')
+  self.s.submit('test',{'type':'satisfy','intent_id':i,'reason':'main 已交付并通过检查','human_confirmed':True},rev,'s2','test')
+  item=self.s.read('test')['intents'][i];self.assertEqual(item['status'],'completed');self.assertEqual(item['satisfied_reason'],'main 已交付并通过检查')
+  self.assertEqual(self.s.read('test')['planning_revision'],plan+1)
+  with self.assertRaises(ValueError):self.s.submit('test',{'type':'satisfy','intent_id':i,'reason':'再次结案','human_confirmed':True},self.s.read('test')['revision'],'s3','test')
+ def test_requirement_with_an_unfinished_task_cannot_be_marked_satisfied(self):
+  i=self.submit()['event']['data']['id'];self.s.bind('test','job',{'title':'t'},intent_ids=[i])
+  with self.assertRaises(ValueError):self.s.submit('test',{'type':'satisfy','intent_id':i,'reason':'已经满足','human_confirmed':True},self.s.read('test')['revision'],'s','test')
+  decision=self.submit('decision',key='d')['event']['data']['id']
+  with self.assertRaises(ValueError):self.s.submit('test',{'type':'satisfy','intent_id':decision,'reason':'不是需求','human_confirmed':True},self.s.read('test')['revision'],'s4','test')
  def test_recovery_notes_dont_replace_contract(self):
   self.s.bind('test','job',{'title':'old'})
   self.s.bind('test','job',{'title':'old','execution_notes':'untrusted draft'})
