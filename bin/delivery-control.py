@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 """Explicit per-project delivery setup and operator Packet submission."""
 import argparse,hashlib,json,pathlib,sys,datetime,fcntl
-from board import ROOT,Board
+from runtime import ROOT
 from delivery import validate
 from roles import resolve,fingerprints,safe_path
-from bridge import validate_profile
-from tracker import local_mode,open_tracker
+from project_adapter import validate_profile
+from tracker import open_tracker
 
 def config():return json.loads((ROOT/'data/control.json').read_text())
 def project(s,lane):
  if lane not in s['projects']:raise ValueError('Unknown executable project lane (DS1 is excluded)')
  return s['projects'][lane]
-def tracker(cfg=None):return open_tracker(ROOT,Board,cfg)
-def provision_agent(s,key,company,lane):
- # Paperclip heartbeat agent. Local mode never creates one; the launcher runs the worker.
- b=Board()
- if key not in s['agents']:
-  a=b.api('POST',f'/companies/{company}/agents',{'name':lane+' / packet delivery','role':'engineer','adapterType':'process','adapterConfig':{'command':'/usr/bin/python3','args':[str(ROOT/'bin/delivery-worker.py'),lane],'cwd':str(ROOT),'timeoutSec':0},'runtimeConfig':{'heartbeat':{'enabled':True,'intervalSec':60,'wakeOnDemand':True,'maxConcurrentRuns':1}},'permissions':{'canCreateAgents':False,'canCreateSkills':False}})
-  s['agents'][key]=a['id']
- else:
-  old=b.api('GET','/agents/'+s['agents'][key])
-  b.api('PATCH','/agents/'+s['agents'][key],{'adapterConfig':{**old['adapterConfig'],'timeoutSec':0},'runtimeConfig':{'heartbeat':{'enabled':True,'intervalSec':60,'wakeOnDemand':True,'maxConcurrentRuns':1}}})
-  a=b.api('GET','/agents/'+s['agents'][key])
-  if a['status']=='paused':b.api('POST','/agents/'+s['agents'][key]+'/resume',{})
+def tracker():return open_tracker(ROOT)
 def configure(lane,path=None):
  from execution_config import inherited_policy,inherited_mandate
  s=config();p=project(s,lane);repo=pathlib.Path(p['repo']).resolve()
@@ -46,10 +35,8 @@ def configure(lane,path=None):
  if not path:
   from delivery import validate
   validate({'title':'Configuration check','requirements':['Configuration only'],'acceptance':['No task execution'],'allowed_paths':policy.get('allowed_paths') or ['configuration-check.txt'],'baseline_sha':__import__('repository').git(repo,'rev-parse','HEAD').decode().strip()},policy)
- key=lane+':delivery'
- if local_mode(ROOT):s.setdefault('agents',{})
- else:provision_agent(s,key,p.get('company',s.get('company')),lane)
- # No arbitrary task gets a Packet or authorization merely by creating an Agent.
+ s.setdefault('agents',{})
+ # No arbitrary task gets a Packet or authorization merely by configuration.
  folder=ROOT/'data/delivery-policies';folder.mkdir(exist_ok=True,mode=0o700)
  (folder/(lane+'.json')).write_text(json.dumps(policy,indent=2))
  (ROOT/'data/control.json').write_text(json.dumps(s,indent=2))
@@ -116,9 +103,8 @@ def submit(lane,path,publish,issue=None):
  s=config();p=project(s,lane);validate_profile(p['profile'])
  packet=json.loads(pathlib.Path(path).read_text());policy=json.loads((ROOT/'data/delivery-policies'/(lane+'.json')).read_text());validate(packet,policy)
  if publish and not policy.get('github_repo'):raise ValueError('No approved publication repository')
- if not local_mode(ROOT) and lane+':delivery' not in s['agents']:raise ValueError('Configure delivery first')
- t=tracker(s)
- owner=t.owner();company=p.get('company',s.get('company'))
+ t=tracker()
+ owner=t.owner();company=None
  # Start unassigned; persist the binding before exposing the task to the worker.
  if issue:
   task=t.get(issue)
@@ -141,7 +127,7 @@ def submit(lane,path,publish,issue=None):
    with (ROOT/'data/locks'/hashlib.sha256(common.encode()).hexdigest()).open('w') as repo_lock:
     fcntl.flock(repo_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     d={'lane':lane,'packet':packet,'policy':policy,'owner':owner,'publish':publish}
-    payload={'projectId':p['id'],'title':packet['title'],'description':'Operator-bound immutable Packet.','status':'backlog'}
+    payload={'title':packet['title'],'description':'Operator-bound immutable Packet.','status':'backlog','projectId':None}
     task=create(ROOT,t,request,d,company,payload)
   t.update(task['id'],status='todo',assignee=lane+':delivery')
   print(task['identifier'],task['id']);return
@@ -159,7 +145,7 @@ def submit(lane,path,publish,issue=None):
 def retry(issue,reason):
  # Explicit operator recovery only. All approval/check gates run again in fresh contexts.
  from recovery import prepare
- s=config();t=tracker(s);task=t.get(issue)
+ s=config();t=tracker();task=t.get(issue)
  if task['status']!='blocked':raise ValueError('Only blocked tasks can be retried')
  path=ROOT/'data/delivery-bindings'/(issue+'.json');d=json.loads(path.read_text())
  if t.role_running(d['lane']+':delivery'):raise ValueError('Worker still running')
@@ -171,7 +157,7 @@ def resume_repair(issue,reason,receipt=False,evidence=False):
  # Resume a stopped scheduler failure without discarding its candidate.
  from delivery import execute
  path=ROOT/'data/delivery-bindings'/(issue+'.json');d=json.loads(path.read_text())
- s=config();t=tracker(s);task=t.get(issue)
+ s=config();t=tracker();task=t.get(issue)
  if task['status'] not in ('blocked','in_progress'):raise ValueError('Task must be blocked or retain an interrupted in-progress board projection')
  if task.get('lane')!=d['lane']:raise ValueError('Project mismatch')
  if t.role_running(d['lane']+':delivery'):raise ValueError('Worker still running')

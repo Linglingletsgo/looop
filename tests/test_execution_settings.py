@@ -68,11 +68,7 @@ class Activation(unittest.TestCase):
   with self.assertRaises(ValueError):activation.enable(self.root,'test',0,'enable',value['fingerprint'])
   self.assertEqual(store.read('test')['revision'],0)
  def test_adapted_project_can_enable_once_without_dispatch(self):
-  self.setup_tick();(self.root/'data/delivery-policies/test.json').unlink();(self.repo/'.agent').mkdir();(self.repo/'.agent/project.json').write_text(json.dumps({'version':1,'roles':{},'checks':[['python3','test.py']]}));autonomy.git(self.repo,'add','.');autonomy.git(self.repo,'commit','-qm','adapter');autonomy.git(self.repo,'remote','add','origin','git@github.com:fixture/project.git');store=Store(self.root);store.ensure('test');calls=[]
-  class Board:
-   def api(self,m,p,d=None):
-    calls.append((m,p))
-    return {'id':'agent','adapterConfig':{},'status':'idle'}
-  with patch('bridge.validate_profile',return_value={}),patch('board.Board',Board):
+  self.setup_tick();(self.root/'data/delivery-policies/test.json').unlink();(self.repo/'.agent').mkdir();(self.repo/'.agent/project.json').write_text(json.dumps({'version':1,'roles':{},'checks':[['python3','test.py']]}));autonomy.git(self.repo,'add','.');autonomy.git(self.repo,'commit','-qm','adapter');autonomy.git(self.repo,'remote','add','origin','git@github.com:fixture/project.git');store=Store(self.root);store.ensure('test')
+  with patch('project_adapter.validate_profile',return_value={}):
    value=activation.preview(self.root,'test');self.assertTrue(value['ready'],value['blockers']);activation.enable(self.root,'test',0,'enable',value['fingerprint']);activation.enable(self.root,'test',0,'enable',value['fingerprint'])
-  self.assertTrue((self.root/'data/delivery-policies/test.json').exists());self.assertNotIn('loop_control',store.read('test'));self.assertFalse(any(p.endswith('/issues') for _,p in calls))
+  self.assertTrue((self.root/'data/delivery-policies/test.json').exists());self.assertNotIn('loop_control',store.read('test'))

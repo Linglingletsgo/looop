@@ -1,5 +1,5 @@
 """P1d: import legacy bindings, deliveries and planning receipts into jobs."""
-import contextlib,http.cookiejar,importlib.util,io,json,pathlib,subprocess,sys,tempfile,unittest,urllib.error
+import contextlib,importlib.util,io,json,pathlib,subprocess,sys,tempfile,unittest
 from unittest.mock import patch
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'bin'))
@@ -28,7 +28,7 @@ class Base(unittest.TestCase):
   return self.write('data/deliveries/'+job_id+'/state.json',{'state':state})
  def rows(self,result):return {row['id']:row for row in result['jobs']}
  def files(self):return {str(path.relative_to(self.root)) for path in self.root.rglob('*') if path.is_file()}
- def migrate(self,apply=False,board=None):return job_migration.migrate(self.root,apply=apply,board=board)
+ def migrate(self,apply=False):return job_migration.migrate(self.root,apply=apply)
  def store(self):return Jobs(self.root)
  def job(self,job_id):return Jobs(self.root).get(job_id)
  def cli_run(self,*args):return subprocess.run([sys.executable,str(CLI),'--root',str(self.root),*args],capture_output=True,text=True)
@@ -169,102 +169,17 @@ class AP(Base):
   (self.root/'data/control.json').unlink()
   with self.assertRaisesRegex(ValueError,'control.json'):self.migrate(apply=True)
   self.assertFalse((self.root/'data/jobs.sqlite').exists())
-
-class FB:
- def __init__(self,issues):self.issues=issues;self.calls=[]
- def api(self,method,path,data=None,retry=True):
-  self.calls.append((method,path,data,retry))
-  if method!='GET':raise AssertionError('non-GET request: '+method)
-  if path.startswith('/issues/'):return dict(self.issues[path.split('/')[-1]])
-  raise AssertionError((method,path))
-
-class BO(Base):
- def test_overlay(self):
-  for job_id in ('diff','mismatch','missing'):self.delivery(job_id,'Derived '+job_id)
-  board=FB({'diff':{'id':'diff','projectId':'project','status':'done','title':'Board title'},
-   'mismatch':{'id':'mismatch','projectId':'other','status':'done','title':'Other lane'}})
-  result=self.migrate(apply=True,board=board);store=self.store();rows=self.rows(result)
-  self.assertEqual((store.get('diff')['status'],store.get('diff')['title']),('done','Board title'))
-  self.assertEqual((store.get('mismatch')['status'],store.get('mismatch')['title']),('todo','Derived mismatch'))
-  self.assertIsNone(store.get('missing'))
-  self.assertEqual(result['board']['diff']['result'],'board_differs')
-  self.assertEqual(result['board']['mismatch']['result'],'lane_mismatch')
-  self.assertEqual((rows['mismatch']['result'],rows['missing']['result']),('created','board_error'))
-  self.assertTrue(rows['missing']['error'])
-  self.assertEqual({call[0] for call in board.calls},{'GET'})
-  self.assertEqual({call[3] for call in board.calls},{False})
-  self.assertEqual(sorted(call[1] for call in board.calls),['/issues/diff','/issues/mismatch','/issues/missing'])
- def test_read_only(self):
-  board=FB({'one':{'id':'one','projectId':'project','status':'todo'}});wrapper=job_migration.ReadOnlyBoard(board)
-  self.assertEqual(wrapper.api('GET','/issues/one')['status'],'todo')
-  self.assertFalse(board.calls[-1][3])
-  with self.assertRaisesRegex(RuntimeError,'read-only'):wrapper.api('PATCH','/issues/one',{})
-  with self.assertRaisesRegex(RuntimeError,'read-only'):wrapper.api('POST','/companies/project/issues',{})
-  self.assertEqual(len(board.calls),1)
- def test_cli_apply_without_board_never_constructs_a_board(self):
+ def test_cli_has_no_board_overlay_and_runs_offline(self):
   self.delivery('offline')
   module=self.cli();out=io.StringIO()
-  with patch('board.Board',side_effect=AssertionError('board must not be constructed')),contextlib.redirect_stdout(out):
+  with contextlib.redirect_stdout(out):
+   with self.assertRaises(SystemExit) as raised:module.main(['--root',str(self.root),'--board'])
+  self.assertEqual(raised.exception.code,2)
+  self.assertFalse((self.root/'data/jobs.sqlite').exists())
+  with contextlib.redirect_stdout(io.StringIO()):
    code=module.main(['--root',str(self.root),'--apply'])
   self.assertEqual(code,0)
-  self.assertEqual(json.loads(out.getvalue())['counts']['created'],1)
-
-class RS:
- def __init__(self,body=b'{}'):self.body=body
- def read(self):return self.body
- def __enter__(self):return self
- def __exit__(self,*exc):return False
-
-class OP:
- def __init__(self):self.requests=[];self.fail=True;self.issues={}
- def open(self,request,timeout=None):
-  self.requests.append((request.get_method(),request.full_url))
-  if request.get_method()=='POST':return RS()
-  if self.fail:raise urllib.error.HTTPError(request.full_url,401,'Unauthorized',{},io.BytesIO(b'expired'))
-  return RS(json.dumps(self.issues[request.full_url.rsplit('/',1)[-1]]).encode())
-
-class BR(Base):
- def board_401(self):
-  import board as board_module
-  self.write('data/owner-login.json',{'email':'owner@example.test','password':'secret'})
-  client=board_module.Board.__new__(board_module.Board)
-  client.jar=http.cookiejar.MozillaCookieJar(str(self.root/'data/board-cookies.txt'))
-  client.opener=OP()
-  for name,value in (('ROOT',self.root),('BASE','http://board')):
-   patcher=patch.object(board_module,name,value);patcher.start();self.addCleanup(patcher.stop)
-  return client,client.opener
- def test_401(self):
-  self.delivery('expired')
-  client,opener=self.board_401();before=self.files()
-  dry=self.migrate(board=client)
-  self.assertEqual((dry['mode'],self.rows(dry)['expired']['result']),('dry-run','board_error'))
-  self.assertIn('session expired',self.rows(dry)['expired']['error'])
-  self.assertEqual(self.files(),before)
-  applied=self.migrate(apply=True,board=client)
-  self.assertEqual(self.rows(applied)['expired']['result'],'board_error')
-  self.assertIsNone(self.job('expired'))
-  self.assertEqual({method for method,_ in opener.requests},{'GET'})
-  self.assertNotIn('data/board-cookies.txt',self.files())
-  new=self.files()-before
-  for path in new:
-   self.assertTrue(path in ('data/.jobs.lock','data/locks/migrate-jobs') or path.startswith('data/jobs.sqlite'),path)
-  self.assertIn('data/jobs.sqlite',new)
-  opener.fail=False;opener.issues['expired']={'id':'expired','projectId':'project','status':'done','title':'Board title'}
-  recovered=self.migrate(apply=True,board=client)
-  self.assertEqual(self.rows(recovered)['expired']['result'],'created')
-  stored=self.job('expired')
-  self.assertEqual((stored['status'],stored['title'],stored['assignee']),('done','Board title','owner'))
-
-class OA(Base):
- def test_board_assignee(self):
-  self.delivery('receipt-merged','Merged');self.receipt('receipt-merged','merged')
-  self.delivery('no-receipt','Todo')
-  board=FB({'receipt-merged':{'id':'receipt-merged','projectId':'project','status':'todo','title':'Merged'},
-   'no-receipt':{'id':'no-receipt','projectId':'project','status':'done','title':'Todo'}})
-  self.migrate(apply=True,board=board);store=self.store()
-  self.assertEqual((store.get('receipt-merged')['status'],store.get('receipt-merged')['assignee']),('todo','test:delivery'))
-  self.assertEqual((store.get('no-receipt')['status'],store.get('no-receipt')['assignee']),('done','owner'))
-  self.assertEqual([job['id'] for job in launch_loops.delivery_pending(self.root,'test')],['receipt-merged'])
+  self.assertEqual(self.job('offline')['status'],'todo')
 
 class SI(Base):
  def test_source_errors(self):
@@ -330,7 +245,7 @@ class IN(Base):
    {'state':'binding','binding':self.binding,'issue':{'id':'task-todo'}})
   self.assertEqual(binding_requests.reconcile(self.root,self.tracker),[{'job':'task-todo','state':'bound'}])
   self.assertEqual(json.loads(journal.read_text())['state'],'bound')
-  with patch.object(worker,'ROOT',self.root),patch.object(worker,'Board',side_effect=AssertionError('local mode must not use a board')),patch.object(worker,'execute',return_value={'state':'validated'}) as execute:
+  with patch.object(worker,'ROOT',self.root),patch.object(worker,'execute',return_value={'state':'validated'}) as execute:
    worker.heartbeat('test')
    worker.heartbeat('test')
   execute.assert_called_once()

@@ -1,6 +1,6 @@
 # Cutover: Paperclip tracker → local jobs
 
-Status: executed on the live install (steps 1–9). Kept as the procedure for other installs; every step needs explicit operator approval at the time it is run. Nothing here is permission by itself.
+Status: executed on the live install (steps 1–9). Kept as the procedure for other installs; every step needs explicit operator approval at the time it is run. Nothing here is permission by itself. P1e (below) removes Paperclip from the code; installs that still run Paperclip must finish steps 1–9 on tag `paperclip-last` before upgrading past P1e, because the `--board` migration overlay and the unit names only exist there.
 
 ## Preconditions
 
@@ -27,7 +27,7 @@ Status: executed on the live install (steps 1–9). Kept as the procedure for ot
 8. **Start the timers again:** `systemctl --user start paperclip-autonomy.timer paperclip-pr-sync.timer` (names kept for now; renaming them is part of P1e). Watch two cycles in `journalctl --user -u paperclip-pr-sync.service`.
 9. **Console:** `python3 bin/console-auth.py set-password`, then start `bin/console-server.py` (systemd user unit in docs/standalone-architecture.md).
 
-Paperclip itself (`paperclip-board.service`) keeps running until P1e, as a read-only history.
+Paperclip itself (`paperclip-board.service`) kept running until P1e, as a read-only history.
 
 ## Rollback
 
@@ -39,8 +39,18 @@ Possible as long as no job was created or changed in local mode after step 6:
 
 After local-mode jobs exist, Paperclip no longer reflects them; rolling back then needs a reverse sync, which is not implemented. Decide before step 8 whether to keep going.
 
-In local mode `state-sync.py` acknowledges the project-state outbox without mirroring to Paperclip, so after switching back the board stays stale until the next state change, which then mirrors the full current snapshot (existing issues are matched by marker, so no duplicates).
+`state-sync.py` acknowledges the project-state outbox without mirroring, so after switching back the board stays stale; a reverse sync is not implemented.
 
-## After cutover (P1e)
+## P1e upgrade
 
-Delete Paperclip-only modules, the Paperclip mirror in `state-sync.py`, the agent provisioning in `delivery-control.py`, `ui/server.mjs` + `bin/install-ui.py`; rename the timers; stop `paperclip-board.service` with operator approval.
+P1e deletes the Paperclip code, so an install cannot go back to the board tracker after it. Do all of this in one approved maintenance window, on the upgraded checkout (branch `refactor/p1e` or later), with the loops paused:
+
+1. **Preconditions.** `data/local-settings.json` has `"tracker": "local"` (or no `tracker` key); `python3 bin/console.py` prints `"tracker": "local"`; the migration from steps 4–5 was run on `paperclip-last`; no delivery in flight and no `looop-loop-*` / `looop-delivery-*` tmux session. Every later step needs explicit operator approval at the time it is run.
+2. **Stop the old timers:** `systemctl --user stop paperclip-autonomy.timer paperclip-pr-sync.timer`, then wait for any running `paperclip-autonomy.service` / `paperclip-pr-sync.service` to finish (`systemctl --user is-active`).
+3. **Install the new units** from `deployment/systemd/` (copy, replacing `@ROOT@` with the install path, into `~/.config/systemd/user/`): `looop-loops.service`, `looop-loops.timer`, `looop-maintenance.service`, `looop-maintenance.timer`. **Do not overwrite an existing `looop-console.service`:** an install that already runs the standalone console (for example bound to the tailnet address with `--host`, `After=tailscaled.service`, `Restart=always`) keeps its installed unit; copy the template only when no console unit exists, and then apply the local bind settings to the installed copy. Do not edit the repository templates for one machine; edit the installed copies. Then `systemctl --user daemon-reload`.
+4. **Disable and remove the old units:** `systemctl --user disable --now paperclip-autonomy.timer paperclip-pr-sync.timer`, then delete the four old unit files. Their names no longer exist in the repository.
+5. **Stop `paperclip-board.service`** (stop and disable). looop no longer calls it.
+6. **Start the new units:** `systemctl --user enable --now looop-loops.timer looop-maintenance.timer` and `systemctl --user enable --now looop-console.service` if it is not already running (set the console password first: `python3 bin/console-auth.py set-password`; a remote bind also needs its address in `console.origins`).
+7. **Verify.** `systemctl --user list-timers 'looop-*'` shows both timers with the next run; `journalctl --user -u looop-maintenance.service` shows two clean cycles; `python3 bin/maintenance.py` exits 0; `python3 bin/console.py` reports `"tracker": "local"`; `curl -s -o /dev/null -w '%{http_code}\n' <console origin>/login` returns 200 for every origin you use (loopback `http://127.0.0.1:3120`, or the tailnet address for a tailnet bind); `/looop` loads through the console login and no header link leaves the console.
+8. **Paperclip data stays untouched by P1e.** Deleting `data/instances`, `.runtime/` and any Paperclip database is a separate, separately approved step, and only after archiving the final database backup: take the backup, verify it restores in a scratch location, archive it off the machine's working tree, and only then delete. Keep it out of Git.
+9. **Rollback** is only practical before step 4: re-enable the old timers (from tag `paperclip-last` if the unit files were already deleted) and start `paperclip-board.service`. Local jobs written after step 6 are not mirrored back, and the old code cannot run against them.

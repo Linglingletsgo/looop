@@ -2,6 +2,12 @@ import json,pathlib,sys,tempfile,unittest,subprocess
 from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import autonomy
+from jobs import Jobs
+from tracker import LocalTracker
+
+def delivery_id(root):
+ files=sorted((root/'data/delivery-bindings').glob('*.json'))
+ return files[0].stem if files else None
 from roles import resolve,fingerprints
 class Autonomy(unittest.TestCase):
  def setUp(self):
@@ -19,7 +25,7 @@ class Autonomy(unittest.TestCase):
  def tearDown(self):self.research_patch.stop();self.tmp.cleanup()
  def setup_tick(self):
   for folder in ('data/autonomy-policies','data/delivery-policies','data/locks'):(self.root/folder).mkdir(parents=True,exist_ok=True)
-  (self.root/'data/autonomy-policies/test.json').write_text(json.dumps(self.mandate));(self.root/'data/delivery-policies/test.json').write_text(json.dumps(self.policy));(self.root/'data/control.json').write_text(json.dumps({'company':'company','projects':{'test':{'id':'project','repo':str(self.repo),'profile':'profile'}},'agents':{'test:delivery':'delivery'}}))
+  (self.root/'data/autonomy-policies/test.json').write_text(json.dumps(self.mandate));(self.root/'data/delivery-policies/test.json').write_text(json.dumps(self.policy));self.jobs=Jobs(self.root);(self.root/'data/control.json').write_text(json.dumps({'company':'company','projects':{'test':{'id':'project','repo':str(self.repo),'profile':'profile'}},'agents':{'test:delivery':'delivery'}}))
  def test_scope_source_evidence_and_duplicate_rejected(self):
   p,key=autonomy.checked_proposal(self.value,self.mandate,self.repo,self.sha,[]);self.assertEqual(p['baseline_sha'],self.sha)
   with self.assertRaisesRegex(ValueError,'Duplicate'):autonomy.checked_proposal(self.value,self.mandate,self.repo,self.sha,[key])
@@ -36,11 +42,11 @@ class Autonomy(unittest.TestCase):
     if path=='/auth/get-session':return {'user':{'id':'owner'}}
     if method=='POST':return {'id':'delivery-issue' if data['status']=='backlog' else 'pm-issue','identifier':'T-1'}
   def model(*a,**k):return responses.pop(0)
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'open_tracker',lambda *a,**k:LocalTracker(self.jobs,self.root)),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
    autonomy.tick('test');self.assertEqual(run.call_count,2)
-   binding=json.loads((self.root/'data/delivery-bindings/delivery-issue.json').read_text());self.assertEqual(binding['authorization']['type'],'project_mandate')
+   binding=json.loads((self.root/'data/delivery-bindings'/(delivery_id(self.root)+'.json')).read_text());self.assertEqual(binding['authorization']['type'],'project_mandate')
    autonomy.tick('test');self.assertEqual(run.call_count,2)
-   state=self.root/'data/deliveries/delivery-issue/state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
+   state=self.root/'data/deliveries'/delivery_id(self.root)/'state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
    autonomy.tick('test');self.assertEqual(run.call_count,2)
  def test_invalid_reference_shape_corrects_before_binding_without_research_repeat(self):
   import copy
@@ -52,13 +58,13 @@ class Autonomy(unittest.TestCase):
     if path=='/auth/get-session':return {'user':{'id':'owner'}}
     if method=='POST':return {'id':'delivery-issue' if data['status']=='backlog' else 'pm-issue','identifier':'T-1'}
   def model(*a,**k):return responses.pop(0)
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'open_tracker',lambda *a,**k:LocalTracker(self.jobs,self.root)),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
    autonomy.tick('test');self.assertEqual(run.call_count,3)
    self.research_mock.assert_called_once()
    self.assertEqual(json.loads(next((self.root/'data/autonomy/test').glob('*/pm-recovery.json')).read_text())['state'],'recovered')
-   binding=json.loads((self.root/'data/delivery-bindings/delivery-issue.json').read_text());self.assertEqual(binding['authorization']['type'],'project_mandate')
+   binding=json.loads((self.root/'data/delivery-bindings'/(delivery_id(self.root)+'.json')).read_text());self.assertEqual(binding['authorization']['type'],'project_mandate')
    autonomy.tick('test');self.assertEqual(run.call_count,3)
-   state=self.root/'data/deliveries/delivery-issue/state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
+   state=self.root/'data/deliveries'/delivery_id(self.root)/'state.json';state.parent.mkdir(parents=True);state.write_text('{"state":"merged","mainline_verified":"same"}')
    autonomy.tick('test');self.assertEqual(run.call_count,3)
 
  def test_no_work_creates_no_delivery(self):
@@ -68,7 +74,7 @@ class Autonomy(unittest.TestCase):
     calls.append((m,p,d))
     if p=='/auth/get-session':return {'user':{'id':'owner'}}
     if m=='POST':return {'id':'pm','identifier':'T-1'}
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No meaningful gap"}'):
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No meaningful gap"}'):
    autonomy.tick('test')
   self.assertFalse((self.root/'data/delivery-bindings').exists())
  def test_blocked_or_unverified_delivery_prevents_new_pm_calls(self):
@@ -80,14 +86,10 @@ class Autonomy(unittest.TestCase):
  def test_only_connection_failure_retries_at_most_twice(self):
   binding=self.root/'data/delivery-bindings/task.json';binding.parent.mkdir(parents=True);binding.write_text('{"lane":"test"}')
   state=self.root/'data/deliveries/task/state.json';state.parent.mkdir(parents=True)
-  state.write_text(json.dumps({'state':'blocked','failed_stage':'building','updated_at':0,'failure':{'retryable':True}}));calls=[]
-  class Board:
-   def api(self,m,p,d=None):
-    if m=='GET':return {'status':'idle'}
-    calls.append(d)
+  state.write_text(json.dumps({'state':'blocked','failed_stage':'building','updated_at':0,'failure':{'retryable':True}}));self.setup_tick();tracker=LocalTracker(self.jobs,self.root);self.jobs.create('test','delivery','Task',status='blocked',assignee='test:delivery',job_id='task')
   with patch('recovery.prepare') as recovery:
-   self.assertTrue(autonomy.retry_connection(self.root,'test',Board(),'agent',now=1000));self.assertEqual(recovery.call_count,1)
+   self.assertTrue(autonomy.retry_connection(self.root,'test',tracker,'agent',now=1000));self.assertEqual(recovery.call_count,1)
    data=json.loads(binding.read_text());data['connection_retries']=2;binding.write_text(json.dumps(data))
-   self.assertFalse(autonomy.retry_connection(self.root,'test',Board(),'agent',now=1000));self.assertEqual(recovery.call_count,1)
+   self.assertFalse(autonomy.retry_connection(self.root,'test',tracker,'agent',now=1000));self.assertEqual(recovery.call_count,1)
    data['connection_retries']=0;binding.write_text(json.dumps(data));s=json.loads(state.read_text());s['failure']['retryable']=False;state.write_text(json.dumps(s))
-   self.assertFalse(autonomy.retry_connection(self.root,'test',Board(),'agent',now=1000))
+   self.assertFalse(autonomy.retry_connection(self.root,'test',tracker,'agent',now=1000))

@@ -1,6 +1,6 @@
 ---
 name: project-adapter
-description: Adapt an existing project for shared agent state, standalone project conversations and optional Paperclip scheduling. Preserve its rules and roles; do not enable autonomous development merely by adapting it.
+description: Adapt an existing project for shared agent state, standalone project conversations and optional scheduling by looop's local scheduler. Preserve its rules and roles; do not enable autonomous development merely by adapting it.
 ---
 
 # Project adaptation
@@ -41,7 +41,7 @@ Validate in a disposable copy first: manifest/rule discovery, standalone context
 
 Keep the project's existing PM responsibility and approval boundaries. Discover relevant PM research skills in the project; do not copy them globally. Optionally declare canonical paths in `.agent/project.json` as `"research":{"skill_paths":[".agents/skills/example/SKILL.md"]}`; absent an explicit list, looop scans the project's `.agents`, `.claude` and `.codex` skill roots. Include any required research manifest/reference rules in the adapter rule mapping. Do not replace a research-only PM with a role that approves or dispatches its own proposals.
 
-The project-owned current state stores `product_goal`: user-facing title, user benefit, success criteria, remaining outcomes, current progress and verified slice count. Native conversations and Paperclip read this same bounded state. Do not create an ever-growing progress diary or mark a whole requirement complete when one PR merges. Existing active tasks keep their original contract; new goals require a research brief with source evidence and counterevidence before binding. Project-specific discovery/approval outputs take precedence; an incompatible workflow stays observation-only until explicitly mapped.
+The project-owned current state stores `product_goal`: user-facing title, user benefit, success criteria, remaining outcomes, current progress and verified slice count. Native conversations and looop's local scheduler read this same bounded state. Do not create an ever-growing progress diary or mark a whole requirement complete when one PR merges. Existing active tasks keep their original contract; new goals require a research brief with source evidence and counterevidence before binding. Project-specific discovery/approval outputs take precedence; an incompatible workflow stays observation-only until explicitly mapped.
 
 When no project method covers the question, looop supplies reviewed defaults from `pm-skills/manifest.json`. Prefer project methods; record the specific gap before loading defaults. Default methods are not project roles and never override project authority. The MIT `research-core` protocol is the default base method; the CC BY-NC-SA `investigation` and `competitive-research` adaptations require the opt-in `noncommercial` pack. For standalone conversations, read the relevant method and the protocol from the looop checkout, apply it to existing project state, and retain original skill licenses when exporting. `research` holds the latest bounded research brief, including an insufficient-evidence result; do not append a research diary.
 

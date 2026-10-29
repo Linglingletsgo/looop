@@ -25,4 +25,4 @@ Re-run `python3 bin/sync-magpie-subagents.py` after toggling. With the pack disa
 
 ## Standalone use
 
-From a project conversation, first read the project's rules and current state. If project methods do not cover the question, explicitly read the relevant pm-skills/<method>/SKILL.md and research-core/SKILL.md from your looop checkout. Apply the method to the project's existing state mechanism. Paperclip is not required; do not copy this pack into business projects or replace their roles.
+From a project conversation, first read the project's rules and current state. If project methods do not cover the question, explicitly read the relevant pm-skills/<method>/SKILL.md and research-core/SKILL.md from your looop checkout. Apply the method to the project's existing state mechanism. No external scheduler is required; do not copy this pack into business projects or replace their roles.

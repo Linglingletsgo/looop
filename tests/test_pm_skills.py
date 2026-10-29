@@ -4,6 +4,8 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import product_research as research
 import autonomy,loop_control
 from project_state import Store
+from jobs import Jobs
+from tracker import LocalTracker
 import test_autonomy as fixtures
 from looop_support import setUpModule  # noqa: F401
 
@@ -143,46 +145,42 @@ class GoalPlanning(unittest.TestCase):
   self.mandate['scope_approval']='pm';self.mandate['enabled']=False;self.setup_tick()
   (self.root/'data/project-state').mkdir();(self.root/'data/project-state/enabled').touch()
   store=Store(self.root);store.ensure('test')
-  with patch('bridge.validate_profile',return_value={}):loop_control.switch(self.root,'test','once',0,'start')
-  return store
- def board(self):
-  counts={'pm':0,'delivery':0}
-  class Board:
-   def api(self,method,path,data=None):
-    if path=='/auth/get-session':return {'user':{'id':'owner'}}
-    if method=='POST':
-     kind='delivery' if data['status']=='backlog' else 'pm';counts[kind]+=1
-     return {'id':kind+'-'+str(counts[kind]),'identifier':'T-'+str(sum(counts.values()))}
-  return Board
+  with patch('project_adapter.validate_profile',return_value={}):loop_control.switch(self.root,'test','once',0,'start')
+  self.jobs=Jobs(self.root);return store
  def test_real_tick_continues_goal_across_two_slices_then_completes_without_research_repeat(self):
-  store=self.configure();Board=self.board();responses=[json.dumps(self.value)]
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',side_effect=lambda _: {'repository_revision':autonomy.git(self.repo,'rev-parse','HEAD').decode().strip()}),patch.object(autonomy,'run',side_effect=lambda *a,**k:responses.pop(0)) as model:
-   autonomy.tick('test');goal=store.read('test')['product_goal']
-   for index in (1,2):
-    task='delivery-'+str(index)
-    store.transition('test',task,'completed',import_existing=True)
-    path=self.root/'data/deliveries'/task/'state.json';path.parent.mkdir(parents=True);path.write_text('{"state":"merged","mainline_verified":true}')
-    if index==1:
-     (self.repo/'test.py').write_text('slice = 1\n');autonomy.git(self.repo,'add','test.py');autonomy.git(self.repo,'commit','-qm','slice one')
-    self.assertEqual(loop_control.settle(self.root,'test')['mode'],'once')
-    if index==1:
-     next_value=copy.deepcopy(self.value);next_value['packet']['requirements']=['Verify next source relationship'];next_value['product_goal']['progress']='First slice delivered';responses.append(json.dumps(next_value))
-    else:responses.append(json.dumps({'action':'goal_complete','goal_id':goal['id'],'reason':'Every specified source criterion checked','completion_evidence':[{'criterion':goal['success_criteria'][0],'path':'spec.py','quote':'Existing behavior returns stable known values.'}]*2}))
-    autonomy.tick('test')
-   self.assertEqual(model.call_count,3);self.research_mock.assert_called_once()
+  store=self.configure();responses=[json.dumps(self.value)]
+  tracker=LocalTracker(self.jobs,self.root)
+  def complete(index):
+   pending=[path.stem for path in (self.root/'data/delivery-bindings').glob('*.json') if not (self.root/'data/deliveries'/path.stem/'state.json').exists()]
+   self.assertEqual(len(pending),1,index);task=pending[0]
+   head=autonomy.git(self.repo,'rev-parse','HEAD').decode().strip()
+   path=self.root/'data/deliveries'/task/'state.json';path.parent.mkdir(parents=True,exist_ok=True)
+   path.write_text(json.dumps({'state':'merged','mainline_verified':head,'target_sha':head,'round':1}))
+   (path.parent/'checks-1.json').write_text(json.dumps([{'argv':['python3','test.py'],'exit_code':0}]))
+   store.transition('test',task,'completed',import_existing=True)
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'open_tracker',lambda *a,**k:tracker),patch.object(autonomy,'validate_profile',side_effect=lambda _: {'repository_revision':autonomy.git(self.repo,'rev-parse','HEAD').decode().strip()}),patch.object(autonomy,'run',side_effect=lambda *a,**k:responses.pop(0)) as model:
+   autonomy.tick('test');goal=store.read('test')['product_goal'];complete(1)
+   (self.repo/'test.py').write_text('slice = 1\n');autonomy.git(self.repo,'add','test.py');autonomy.git(self.repo,'commit','-qm','slice one')
+   self.assertEqual(loop_control.settle(self.root,'test')['mode'],'once')
+   next_value=copy.deepcopy(self.value);next_value['packet']['requirements']=['Verify next source relationship'];next_value['product_goal']['progress']='First slice delivered';responses.append(json.dumps(next_value))
+   autonomy.tick('test');complete(2)
+   responses.append(json.dumps({'action':'goal_complete','goal_id':goal['id'],'reason':'Every specified source criterion checked','completion_evidence':[{'criterion':goal['success_criteria'][0],'path':'spec.py','quote':'Existing behavior returns stable known values.'}]*2}))
+   autonomy.tick('test')
+   self.assertEqual(model.call_count,3)
+   self.assertEqual(self.research_mock.call_count,1)
   self.assertEqual(store.read('test')['product_goal']['status'],'completed');self.assertEqual(store.read('test')['product_goal']['completed_slices'],2)
   self.assertEqual(loop_control.settle(self.root,'test')['mode'],'paused')
  def test_insufficient_research_never_dispatches_or_calls_proposal(self):
   store=self.configure();self.research_mock.return_value={'status':'insufficient_evidence','recommendation':'Need actual evidence','next_step':{'kind':'human_decision','detail':'Choose a concrete product policy'}}
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
    with self.assertRaises(autonomy.ResearchIncomplete):autonomy.tick('test')
    model.assert_not_called()
   self.assertFalse(store.read('test')['tasks']);self.assertEqual(store.read('test')['selection']['phase'],'blocked');self.assertEqual(next(json.loads(p.read_text()) for p in (self.root/'data/autonomy/test').glob('*/state.json'))['failure']['category'],'research_incomplete');self.assertEqual(store.read('test')['research']['status'],'insufficient_evidence');self.assertEqual(loop_control.settle(self.root,'test')['mode'],'paused')
  def check_automatic_research_gap(self,kind):
   store=self.configure();doc=store.read('test')
-  with patch('bridge.validate_profile',return_value={'repository_revision':self.sha}):loop_control.switch(self.root,'test','continuous',doc['revision'],'continuous-'+kind)
+  with patch('project_adapter.validate_profile',return_value={'repository_revision':self.sha}):loop_control.switch(self.root,'test','continuous',doc['revision'],'continuous-'+kind)
   self.research_mock.return_value={'status':'insufficient_evidence','recommendation':'Public sample does not support this candidate','next_step':{'kind':kind,'detail':'Check public samples or choose another opportunity'}}
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
    autonomy.tick('test');model.assert_not_called()
   self.assertFalse(store.read('test')['tasks']);self.assertEqual(store.read('test')['selection']['phase'],'no_work')
   from planning_intervention import unresolved
@@ -197,7 +195,7 @@ class GoalPlanning(unittest.TestCase):
    store.submit('test',{'type':'decision','title':'New scope','body':'Pause the proposed direction','human_confirmed':True},store.read('test')['revision'],'new-decision','test')
    return {'status':'supported','sources':[]}
   self.research_mock.side_effect=research_result
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
    with self.assertRaisesRegex(Exception,'decisions changed'):autonomy.tick('test')
    model.assert_not_called()
   self.assertFalse(store.read('test')['tasks'])

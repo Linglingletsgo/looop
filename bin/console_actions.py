@@ -76,9 +76,8 @@ def execute(value,root=ROOT):
   return store.submit(lane,command,revision,request,'looop-console')
  if action=='retry_planning_attempt':
   from planning_intervention import retry as retry_pm
-  from board import Board
   from tracker import open_tracker
-  result=retry_pm(root,lane,value.get('job'),value.get('reason',''),revision,open_tracker(root,Board))
+  result=retry_pm(root,lane,value.get('job'),value.get('reason',''),revision,open_tracker(root))
   from launch_loops import launch
   launch(root,lane)
   return result
@@ -97,5 +96,5 @@ if __name__=='__main__':
   import contextlib,io
   with contextlib.redirect_stdout(io.StringIO()):result=execute(value)
   print(json.dumps({'ok':True,'result':result},ensure_ascii=False))
- except (ValueError,KeyError,OSError,RuntimeError) as exc:
+ except (ValueError,KeyError,OSError,RuntimeError,TypeError) as exc:
   print(json.dumps({'ok':False,'error':str(exc)[:2000],'conflict':isinstance(exc,Conflict)},ensure_ascii=False))

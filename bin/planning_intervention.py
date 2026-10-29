@@ -8,9 +8,9 @@ from project_state import Store,Conflict
 TERMINAL={'queued','no_work','rejected','cancelled'}
 _MISSING_JOB='该 PM 任务不在本地任务表中（可能未迁移）；请先运行迁移或在维护对话中核对。'
 def missing_job(tracker,issue):
- # A local attempt whose PM issue was never migrated has no job row; Paperclip keeps its own lookup errors.
+ # A planning attempt whose PM job was never migrated has no local job row.
  jobs=getattr(tracker,'jobs',None)
- return getattr(tracker,'name',None)=='local' and jobs is not None and jobs.get(issue) is None
+ return jobs is not None and jobs.get(issue) is None
 
 def unresolved(root,lane):
  result=[]
@@ -60,7 +60,7 @@ def retry(root,lane,job,reason,expected,tracker):
  return {'queued':True,'message':'旧提案已保留。将按当前循环设置重新规划；暂停模式下请启动单次或持续运行。'}
 
 def blocked_patch(reason):
- return {'status':'blocked','unblockDescriptor':{'owner':'board','action':'在 looop 的“处理选题受阻”中核对原因并重新规划；绑定阶段异常交给维护对话。'},'comment':str(reason)[:4000]}
+ return {'status':'blocked','unblockDescriptor':{'owner':'owner','action':'在 looop 的“处理选题受阻”中核对原因并重新规划；绑定阶段异常交给维护对话。'},'comment':str(reason)[:4000]}
 
 def resume_completion(root,lane,job,reason,expected,tracker,run_id='pm'):
  """Validate a saved PM conclusion without another model call or development replay."""
@@ -103,7 +103,7 @@ def resume_completion(root,lane,job,reason,expected,tracker,run_id='pm'):
    rationale=value.get('reason')
    if not isinstance(rationale,str) or not 1<=len(rationale.strip())<=2000:raise ValueError('Concise completion rationale required')
    task=tracker.get(state['issue'])
-   if task['lane']!=lane or task['status'] not in ('blocked','in_progress'):raise ValueError('PM board issue mismatch')
+   if task['lane']!=lane or task['status'] not in ('blocked','in_progress'):raise ValueError('PM job mismatch')
    save(folder/'completion-resume.json',{'previous_state':state,'source_run':run_id,'reason':reason,'target_sha':sha})
    save(folder/'proposal.json',value)
    store.finish_goal(lane,goal['id'],rationale,evidence,doc['planning_revision'])
@@ -111,19 +111,16 @@ def resume_completion(root,lane,job,reason,expected,tracker,run_id='pm'):
    for key in ('error','failure'):state.pop(key,None)
    save(path,state)
    save(root/'data/autonomy'/(lane+'-status.json'),{'state':'ready','reason':'已核验并接收保存的 PM 完成结果；后续遵循当前循环设置。','at':time.time()})
-   try:tracker.update(state['issue'],status='done',comment=state['reason']+'；保存结果接续：'+reason)
-   except Exception as exc:
-    state['completion_board_sync_pending']=str(exc)[:1000];save(path,state)
-   return {'goal_completed':True,'source_run':run_id,'model_calls':0,'board_sync_pending':bool(state.get('completion_board_sync_pending'))}
+   tracker.update(state['issue'],status='done',comment=state['reason']+'；保存结果接续：'+reason)
+   return {'goal_completed':True,'source_run':run_id,'model_calls':0}
 
 
 if __name__=='__main__':
  import argparse,pathlib
  from runtime import ROOT
- from board import Board
  from tracker import open_tracker
  p=argparse.ArgumentParser()
  p.add_argument('action',choices=['resume-completion']);p.add_argument('lane');p.add_argument('job')
  p.add_argument('--reason',required=True);p.add_argument('--expected',type=int,required=True);p.add_argument('--run-id',default='pm')
  a=p.parse_args()
- print(json.dumps(resume_completion(ROOT,a.lane,a.job,a.reason,a.expected,open_tracker(ROOT,Board),a.run_id),ensure_ascii=False))
+ print(json.dumps(resume_completion(ROOT,a.lane,a.job,a.reason,a.expected,open_tracker(ROOT),a.run_id),ensure_ascii=False))

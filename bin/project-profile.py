@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only project discovery/preflight. This is not a Paperclip plugin or scheduler."""
+"""Read-only project discovery/preflight. This is not a scheduler plugin."""
 import argparse
 import hashlib
 import json

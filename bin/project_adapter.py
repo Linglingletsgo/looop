@@ -1,4 +1,4 @@
-"""Project-owned execution contract. No Paperclip client or scheduler dependencies."""
+"""Project-owned execution contract. No remote tracker or scheduler dependencies."""
 import hashlib,json,pathlib,re
 NATIVE=('AGENTS.md','AGENT.md','Agent.md','agents.md')
 
@@ -81,6 +81,17 @@ def context(root,config,role,targets=()):
  if config and config.get('workflow_mapping'):
   result+='\nUSER-APPROVED WORKFLOW RESPONSIBILITY MAPPING:\n'+config['workflow_mapping']
  return result
+
+def validate_profile(name):
+ """Check profiles/<name> with bin/project-profile.py (rule hashes, committed rules, current HEAD) and load it."""
+ import importlib.util
+ from runtime import ROOT as root
+ relative=pathlib.PurePath(str(name))
+ if relative.is_absolute() or '..' in relative.parts:raise ValueError('Profile name must stay under profiles/')
+ path=root/'profiles'/relative
+ spec=importlib.util.spec_from_file_location('project_profile',root/'bin/project-profile.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+ module.check(path)
+ return json.loads(path.read_text())
 
 def check_policy(policy):
  config=policy.get('project_adapter')

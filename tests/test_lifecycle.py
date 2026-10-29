@@ -3,6 +3,8 @@ from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 from lifecycle import failure,terminal
 from health import progress,reconcile
+from jobs import Jobs
+from tracker import LocalTracker
 class Lifecycle(unittest.TestCase):
  def test_quotation_failure_is_not_subscription_quota(self):
   self.assertEqual(failure('Research quotation not found in independently read source: spec.md')['category'],'research_evidence')
@@ -24,12 +26,8 @@ class Lifecycle(unittest.TestCase):
    root=pathlib.Path(temp);(root/'data/runs/run').mkdir(parents=True);(root/'data/runs/run/handoff.md').write_text('report')
    with sqlite3.connect(root/'data/bridge.sqlite') as db:
     db.execute('CREATE TABLE jobs (issue TEXT,state TEXT,run_id TEXT,result TEXT)');db.execute("INSERT INTO jobs VALUES ('issue','completed','run','report')")
-   patches=[]
-   class Board:
-    def api(self,method,path,data=None):
-     if method=='GET':return {'status':'blocked','assigneeAgentId':'old'}
-     patches.append(data)
-   self.assertEqual(reconcile(root,Board()),1);self.assertEqual(patches[0]['status'],'done');self.assertIsNone(patches[0]['assigneeAgentId'])
+   jobs=Jobs(root);jobs.create('test','planning','PM / run','legacy',status='blocked',assignee='test:product-manager',job_id='issue')
+   self.assertEqual(reconcile(root,LocalTracker(jobs,root)),1);self.assertEqual(jobs.get('issue')['status'],'done');self.assertIsNone(jobs.get('issue')['assignee'])
 
  def test_repeated_commands_are_detected_without_stopping(self):
   with tempfile.TemporaryDirectory() as temp:

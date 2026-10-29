@@ -110,13 +110,9 @@ class OnboardingRoleInstall(unittest.TestCase):
   with patch.object(onboarding,'plan_default_roles',lambda *a,**k:real(*a,**k)+[{'role':'qa','path':'.agent/roles/qa.md','sha256':'x'}]):
    self.assertNotEqual(first,onboarding.preview(self.repo,self.base)['fingerprint'])
  def test_connect_installs_roles_only_when_it_creates_the_adapter(self):
-  class Board:
-   def api(self,method,path,data=None):
-    if method=='GET':return []
-    return {'id':'company' if path=='/companies' else 'project'}
   real=onboarding.preview;root=self.controller('controller')
   with patch.object(onboarding,'preview',side_effect=lambda repo:real(repo,self.base)):
-   p=real(self.repo,self.base);result=onboarding.connect(root,self.repo,p['fingerprint'],Board())
+   p=real(self.repo,self.base);result=onboarding.connect(root,self.repo,p['fingerprint'])
   self.assertEqual(sorted(result['default_roles']['installed']),['builder','product','product-manager','reviewer'])
   self.assertIn('builder',resolve(self.repo)['project_roles'])
   other=self.base/'adapted';other.mkdir();subprocess.run(['git','init','-q',str(other)],check=True)
@@ -125,12 +121,12 @@ class OnboardingRoleInstall(unittest.TestCase):
   subprocess.run(['git','-C',str(other),'add','.'],check=True);subprocess.run(['git','-C',str(other),'commit','-qm','fixture'],check=True)
   root2=self.controller('controller2')
   with patch.object(onboarding,'preview',side_effect=lambda repo:real(repo,self.base)):
-   p=real(other,self.base);second=onboarding.connect(root2,other,p['fingerprint'],Board())
+   p=real(other,self.base);second=onboarding.connect(root2,other,p['fingerprint'])
   third=self.base/'failing';third.mkdir();subprocess.run(['git','init','-q',str(third)],check=True)
   for k,v in [('user.name','Test'),('user.email','test@example.test')]:subprocess.run(['git','-C',str(third),'config',k,v],check=True)
   (third/'README.md').write_text('x\n');subprocess.run(['git','-C',str(third),'add','.'],check=True);subprocess.run(['git','-C',str(third),'commit','-qm','fixture'],check=True)
   with patch.object(onboarding,'preview',side_effect=lambda repo:real(repo,self.base)),patch.object(onboarding,'install_default_roles',side_effect=ValueError('disk full')):
-   p=real(third,self.base);failed=onboarding.connect(self.controller('controller3'),third,p['fingerprint'],Board())
+   p=real(third,self.base);failed=onboarding.connect(self.controller('controller3'),third,p['fingerprint'])
   self.assertTrue(failed['connected']);self.assertEqual(failed['default_roles'],{'error':'disk full'})
   self.assertIsNone(second['default_roles']);self.assertFalse((other/'.agent/roles').exists());self.assertEqual(json.loads((other/'.agent/project.json').read_text())['roles'],{})
 

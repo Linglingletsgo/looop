@@ -85,7 +85,7 @@ class Routes(Live):
    self.assertIn(part,cookie)
   self.assertNotIn('Secure',cookie);self.assertIsNotNone(token)
   status,_,data=self.call('GET','/looop',token=token);self.assertEqual(status,200);self.assertIn(b'INDEX',data)
-  status,_,data=self.call('GET','/api/looop/status',token=token);self.assertEqual(status,200);self.assertEqual(json.loads(data)['console'],'standalone')
+  status,_,data=self.call('GET','/api/looop/status',token=token);self.assertEqual(status,200);self.assertEqual(json.loads(data)['tracker'],'local');self.assertNotIn('console',json.loads(data))
 
  def test_forwarded_proto_does_not_imply_https(self):
   status,values,token=self.login(headers={'X-Forwarded-Proto':'https'})
@@ -144,7 +144,7 @@ class Routes(Live):
  def test_status_proxy_and_failures(self):
   _,_,token=self.login()
   status,_,data=self.call('GET','/api/looop/status',token=token);value=json.loads(data)
-  self.assertEqual(status,200);self.assertEqual(value['tracker'],'local');self.assertEqual(value['console'],'standalone')
+  self.assertEqual(status,200);self.assertEqual(value['tracker'],'local');self.assertNotIn('console',value)
   self.mode('status','fail');status,_,data=self.call('GET','/api/looop/status',token=token)
   self.assertEqual(status,503);self.assertEqual(json.loads(data)['error'],server.STATUS_ERROR)
   self.mode('status','huge');self.assertEqual(self.call('GET','/api/looop/status',token=token)[0],503)

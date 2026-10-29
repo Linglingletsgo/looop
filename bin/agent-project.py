@@ -49,7 +49,7 @@ def bind(lane,packet,job,publish=False):
   if path.exists():raise ValueError('Task already bound; use run to inspect/preserve existing attempt')
   config_path=ROOT/'data/control.json'
   if config_path.exists() and json.loads(config_path.read_text()).get('projects',{}).get(lane,{}).get('id'):
-   raise ValueError('Paperclip-linked lane: create new bindings via delivery-control.py submit; standalone run of existing bindings uses this same state and lock. New independent projects use a separate runtime root.')
+   raise ValueError('Registered lane: create new bindings via delivery-control.py submit; standalone run of existing bindings uses this same state and lock. New independent projects use a separate runtime root.')
   store=Store(ROOT);store.project_guard(lane);store.bind(lane,job,packet,provenance={'source':'operator-cli'})
   save(path,{'lane':lane,'packet':packet,'policy':policy,'publish':publish,'source':'operator-cli'})
  return {'job':job,'phase':'queued','publish':publish}

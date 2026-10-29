@@ -25,7 +25,7 @@ def preview(root,lane):
  if not reasons:
   try:
    inherited_policy(repo)
-   from bridge import validate_profile
+   from project_adapter import validate_profile
    if not project.get('profile'):raise ValueError('尚未建立已核验的项目执行基线 profile。')
    validate_profile(project['profile'])
   except (ValueError,OSError) as exc:reasons.append(str(exc))

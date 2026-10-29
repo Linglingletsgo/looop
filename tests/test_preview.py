@@ -51,6 +51,6 @@ class Preview(unittest.TestCase):
   import importlib.util
   path=pathlib.Path(preview.__file__).parent/'delivery-control.py'
   spec=importlib.util.spec_from_file_location('preview_test_control',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-  with patch.object(module,'ROOT',self.root),patch.object(module,'Board'),patch('preview.sync') as sync:
+  with patch.object(module,'ROOT',self.root),patch('preview.sync') as sync:
    module.sync_prs()
   sync.assert_called_once_with(self.root)

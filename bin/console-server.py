@@ -162,9 +162,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
  def _status(self):
   output=_run([PYTHON,str(self.server.root/'bin/console.py')],self.server.root)
+  if output is None:return self._json(503,{'error':STATUS_ERROR})
   try:value=json.loads(output.decode('utf-8'))
   except Exception:return self._json(503,{'error':STATUS_ERROR})
-  if isinstance(value,dict):value['console']='standalone'
+  if not isinstance(value,dict):return self._json(503,{'error':STATUS_ERROR})
   self._json(200,value)
 
  def _action(self):

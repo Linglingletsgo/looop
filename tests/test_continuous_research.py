@@ -10,11 +10,7 @@ class Continuous(unittest.TestCase):
  def test_no_work_rechecks_immediately_without_manual_start(self):
   self.mandate['max_proposals_per_day']=None
   self.setup_tick()
-  class Board:
-   def api(self,m,p,d=None):
-    if p=='/auth/get-session':return {'user':{'id':'owner'}}
-    if m=='POST':return {'id':'pm','identifier':'T-1'}
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No supported opportunity yet"}') as run,patch.object(autonomy.time,'time',return_value=10000):
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No supported opportunity yet"}') as run,patch.object(autonomy.time,'time',return_value=10000):
    autonomy.tick('test');count=run.call_count
    self.assertEqual(autonomy.tick('test'),'continue');self.assertGreater(run.call_count,count)
    self.assertNotIn('next_research_at',json.loads((self.root/'data/autonomy/test-status.json').read_text()))

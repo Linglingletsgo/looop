@@ -14,7 +14,7 @@ class LoopControls(unittest.TestCase):
   self.write('data/control.json',{'projects':{'demo':{'profile':'fixture','repo':str(self.root),'id':'project'}},'agents':{'demo:delivery':'agent'}})
   self.write('data/autonomy-policies/demo.json',{'enabled':False});self.write('data/delivery-policies/demo.json',{'enabled':True})
   self.store=Store(self.root);self.store.ensure('demo')
-  self.validation=patch('bridge.validate_profile',return_value={});self.validation.start()
+  self.validation=patch('project_adapter.validate_profile',return_value={});self.validation.start()
  def tearDown(self):self.validation.stop();self.tmp.cleanup()
  def write(self,p,value):
   path=self.root/p;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value))
@@ -88,13 +88,9 @@ class Onboarding(unittest.TestCase):
   root=self.base/'controller';(root/'data').mkdir(parents=True);(root/'data/control.json').write_text('{"projects":{},"agents":{}}');(root/'bin').mkdir()
   source=pathlib.Path(__file__).resolve().parents[1]/'bin'
   for name in ('project-session.py','project_state.py','state_revisions.py','product_goals.py','lifecycle_io.py'):(root/'bin'/name).write_bytes((source/name).read_bytes())
-  class Board:
-   def api(self,method,path,data=None):
-    if method=='GET':return []
-    return {'id':'company' if path=='/companies' else 'project'}
   real=onboarding.preview
   with patch.object(onboarding,'preview',side_effect=lambda repo:real(repo,self.base)):
-   p=real(self.repo,self.base);result=onboarding.connect(root,self.repo,p['fingerprint'],Board())
+   p=real(self.repo,self.base);result=onboarding.connect(root,self.repo,p['fingerprint'])
   self.assertFalse(result['automatic_scheduling']);self.assertTrue((self.repo/'AGENTS.md').read_text().startswith('Preserve existing project rules.'));self.assertFalse(json.loads((self.repo/'.agent/project.json').read_text())['execution_enabled']);self.assertEqual(Store(root).database('example'),self.repo/'.agent/local/runtime/data/project-state/state.sqlite');self.assertFalse(json.loads((root/'data/control.json').read_text())['agents'])
 
 class SingleRunIntegration(unittest.TestCase):
@@ -104,25 +100,17 @@ class SingleRunIntegration(unittest.TestCase):
  setup_tick=Fixture.setup_tick
  def test_single_pm_no_work_never_repeats_and_settles(self):
   self.mandate['enabled']=False;self.setup_tick();store=Store(self.root);store.ensure('test')
-  with patch('bridge.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'single')
-  class Board:
-   def api(self,method,path,data=None):
-    if path=='/auth/get-session':return {'user':{'id':'owner'}}
-    if method=='POST':return {'id':'pm','identifier':'T-1'}
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No valuable work"}') as model:
+  with patch('project_adapter.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'single')
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No valuable work"}') as model:
    autonomy.tick('test');autonomy.tick('test');self.assertEqual(model.call_count,1)
   self.assertEqual(loop.view(self.root,'test')['mode'],'paused');self.assertFalse((self.root/'data/delivery-bindings').exists())
  def test_single_paused_during_planning_drains_without_next_selection(self):
   self.mandate['enabled']=False;self.setup_tick();store=Store(self.root);store.ensure('test')
-  with patch('bridge.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'single')
-  class Board:
-   def api(self,method,path,data=None):
-    if path=='/auth/get-session':return {'user':{'id':'owner'}}
-    if method=='POST':return {'id':'pm','identifier':'T-1'}
+  with patch('project_adapter.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'single')
   def model(*args,**kwargs):
    loop.switch(self.root,'test','paused',store.read('test')['revision'],'pause')
    return '{"action":"no_work","reason":"Drained"}'
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model) as run:
    autonomy.tick('test');autonomy.tick('test');self.assertEqual(run.call_count,1)
   self.assertEqual(loop.view(self.root,'test')['mode'],'paused')
 
@@ -130,12 +118,8 @@ class SingleRunIntegration(unittest.TestCase):
   self.mandate['enabled']=False;self.setup_tick();store=Store(self.root);store.ensure('test');(self.root/'data/project-state/enabled').touch()
   prior=self.root/'data/autonomy/test/old/state.json';prior.parent.mkdir(parents=True)
   prior.write_text(json.dumps({'state':'cancelled','baseline_sha':self.sha,'planning_revision':0,'selected_intent':None,'error':'Research plan schema failed','resolution':{'previous_state':'blocked'}}))
-  with patch('bridge.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'restart')
-  class Board:
-   def api(self,method,path,data=None):
-    if path=='/auth/get-session':return {'user':{'id':'owner'}}
-    if method=='POST':return {'id':'pm','identifier':'T-1'}
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',Board),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No ready work after verified research"}') as model:
+  with patch('project_adapter.validate_profile',return_value={}):loop.switch(self.root,'test','once',0,'restart')
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value='{"action":"no_work","reason":"No ready work after verified research"}') as model:
    autonomy.tick('test');loop.settle(self.root,'test');autonomy.tick('test')
    self.assertEqual(model.call_count,1)
   self.assertEqual(len(list(prior.parent.parent.glob('*/state.json'))),2)
@@ -146,7 +130,7 @@ class SingleRunIntegration(unittest.TestCase):
   prior=self.root/'data/autonomy/test/old/state.json';prior.parent.mkdir(parents=True)
   prior.write_text(json.dumps({'state':'no_work','baseline_sha':self.sha,'planning_revision':0,'selected_intent':None}))
   store.selection('test','waiting','Stale resume message')
-  with patch('bridge.validate_profile',return_value={}):loop.switch(self.root,'test','once',store.read('test')['revision'],'restart')
+  with patch('project_adapter.validate_profile',return_value={}):loop.switch(self.root,'test','once',store.read('test')['revision'],'restart')
   with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run') as model:
    autonomy.tick('test');model.assert_not_called()
   self.assertEqual(loop.view(self.root,'test')['mode'],'paused');self.assertEqual(store.read('test')['selection']['phase'],'no_work');self.assertNotEqual(store.read('test')['phase'],'waiting')

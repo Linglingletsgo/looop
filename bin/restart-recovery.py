@@ -7,8 +7,8 @@ from lifecycle import save
 from tracker import as_tracker
 
 def reconcile(root,tracker):
- tracker=as_tracker(tracker,root);local=tracker.name=='local'
- results=[];cfg=json.loads((root/'data/control.json').read_text())
+ tracker=as_tracker(tracker,root)
+ results=[]
  lock=root/'data/locks/restart-recovery';lock.parent.mkdir(parents=True,exist_ok=True)
  with lock.open('w') as handle:
   try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -21,8 +21,7 @@ def reconcile(root,tracker):
     if stage not in ('planning','building','checking','acceptance','pr_ready') and not stage.startswith('review_'):continue
     if alive(state.get('owner')) is not False:continue
     issue=tracker.get(path.stem)
-    agent=None if local else cfg['agents'].get(lane+':delivery')
-    if issue.get('lane')!=lane or not local and not agent:continue
+    if issue.get('lane')!=lane:continue
     if issue['status'] not in ('todo','in_progress') or not tracker.assignee_is(issue,lane+':delivery'):continue
     store=configured_store(root)
     if store:store.project_guard(lane)
@@ -37,6 +36,6 @@ def reconcile(root,tracker):
  return results
 
 if __name__=='__main__':
- from board import ROOT,Board
+ from runtime import ROOT
  from tracker import open_tracker
- print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))
+ print(json.dumps(reconcile(ROOT,open_tracker(ROOT)),ensure_ascii=False))

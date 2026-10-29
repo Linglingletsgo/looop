@@ -1,8 +1,9 @@
 """Finite PM proposal -> independent Product scope approval -> existing delivery queue."""
 import datetime,fcntl,hashlib,json,pathlib,subprocess,time,uuid
-from board import ROOT,Board
+from runtime import ROOT
 from tracker import open_tracker,as_tracker
-from bridge import git,snapshot,validate_profile
+from repository import git,snapshot
+from project_adapter import validate_profile
 from roles import resolve,contract,fingerprints
 from sandbox import run
 from delivery import validate
@@ -198,7 +199,7 @@ def tick(lane):
     save(ROOT/'data/autonomy'/(lane+'-status.json'),{'state':'waiting_decision','reason':str(exc)});return
   revision=shared['planning_revision'] if shared else 0
   current_goal=active_goal(shared);selected=next_intent(shared);selected_id=selected['id'] if selected else None
-  t=open_tracker(ROOT,Board);t.require_role(lane+':delivery')  # fail before any side effect
+  t=open_tracker(ROOT);t.require_role(lane+':delivery')  # fail before any side effect
   retry_connection(ROOT,lane,t,lane+':delivery')
   if shared and not selected and not current_goal and any(i['status']=='waiting_decision' for i in shared['intents'].values()):
    reason='Confirmed requirements need scope clarification; inspect per-intent planning_reason'
@@ -226,7 +227,7 @@ def tick(lane):
   with (ROOT/'data/locks'/hashlib.sha256(common.encode()).hexdigest()).open('w') as repo_lock:
    try:fcntl.flock(repo_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
    except BlockingIOError:return
-   b=open_tracker(ROOT,Board);owner=b.owner();company=cfg.get('company',s.get('company'))
+   b=open_tracker(ROOT);owner=b.owner();company=None
    job=uuid.uuid4().hex;folder=ROOT/'data/autonomy'/lane/job;folder.mkdir(parents=True,mode=0o700)
    claim(ROOT,lane,job)
    receipt={'owner':identity(),'planning_protocol':3,'planning_restarts':planning_restarts,'origin':'human_confirmed' if selected else 'autonomous_discovery','selected_intent':selected_id,'state':'proposing','baseline_sha':sha,'planning_revision':revision,'day':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),'started_at':time.time()}
@@ -386,7 +387,7 @@ def tick(lane):
     receipt.update(state='cancelled' if isinstance(exc,Conflict) else 'blocked',error=str(exc),failure=({'category':'research_incomplete','retryable':False,'next_action':'核对具体研究缺口、所需产品决定或来源恢复情况，再从处理选题受阻重新规划。'} if isinstance(exc,ResearchIncomplete) else failure(exc)));save(folder/'state.json',receipt)
     try:b.update(task['id'],**({'status':'cancelled','comment':str(exc)} if isinstance(exc,Conflict) else blocked_patch('自主规划暂停；无自动重放：'+str(exc))))
     except Exception as sync_exc:
-     receipt['board_sync_error']=str(sync_exc)[:2000];save(folder/'state.json',receipt)
+     receipt['job_sync_error']=str(sync_exc)[:2000];save(folder/'state.json',receipt)
     raise
 
 def run_loop(lane):

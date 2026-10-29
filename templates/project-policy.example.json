@@ -1,5 +1,5 @@
 {
-  "_note": "Proposed custom bridge configuration; not native Paperclip config. No bridge is shipped in this kit.",
+  "_note": "Example policy document for a project adaptation. looop ships no bridge; this file is documentation, not a runtime input.",
   "schema_version": 1,
   "project_id": "replace-me",
   "tier": "lite",

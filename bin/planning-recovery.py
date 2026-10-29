@@ -43,6 +43,6 @@ def reconcile(root,tracker):
     except Exception as exc:results.append({'job':receipt.parent.name,'state':'deferred','reason':str(exc)})
  save(root/'data/planning-recovery-status.json',{'results':results});return results
 if __name__=='__main__':
- from board import ROOT,Board
+ from runtime import ROOT
  from tracker import open_tracker
- print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))
+ print(json.dumps(reconcile(ROOT,open_tracker(ROOT)),ensure_ascii=False))

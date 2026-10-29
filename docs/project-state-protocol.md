@@ -1,10 +1,10 @@
 # 项目状态与角色交接
 
-项目当前状态文件 `.agent/local/runtime/data/project-state/<lane>.current.json` 是权威当前状态；`current.json` 是兼容别名，SQLite 保存事务索引及同步队列。代码和实际检查说明当前实现，产品需求及有效决定说明目标。Paperclip 是投影。角色结果文件是一次执行的输入或证据，不是第二份项目状态。
+项目当前状态文件 `.agent/local/runtime/data/project-state/<lane>.current.json` 是权威当前状态；`current.json` 是兼容别名，SQLite 保存事务索引及同步队列。代码和实际检查说明当前实现，产品需求及有效决定说明目标。调度队列是无 Paperclip 的本地任务表。角色结果文件是一次执行的输入或证据，不是第二份项目状态。
 
 ## 独立使用
 
-项目工具只依赖 Python 标准库；结构化提交还会调用 Git。不需要 Paperclip 或 looop 服务在线：
+项目工具只依赖 Python 标准库；结构化提交还会调用 Git。不需要 looop 调度服务在线：
 
 ```sh
 python3 .agent/tools/project-session.py context --repo .

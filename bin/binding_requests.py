@@ -62,7 +62,7 @@ def reconcile(root,tracker):
       issue=tracker.get(record['issue']['id'])
      elif tracker.idempotent_create:
       payload=record['payload']
-      if not record.get('job_id'):raise ValueError('Journal predates the local tracker; reconcile it in Paperclip mode or migrate it first')
+      if not record.get('job_id'):raise ValueError('Journal predates the local job table; rerun scripts/migrate-jobs.py and reconcile again')
       try:issue=tracker.get(record['job_id'])
       except KeyError:issue=tracker.create(binding['lane'],'delivery',payload['title'],payload['status'],payload['description'],job_id=record['job_id'])
       record.update(state='binding',issue=issue);save(path,record)
@@ -75,6 +75,6 @@ def reconcile(root,tracker):
  save(root/'data/binding-recovery-status.json',{'results':results});return results
 
 if __name__=='__main__':
- from board import ROOT,Board
+ from runtime import ROOT
  from tracker import open_tracker
- print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))
+ print(json.dumps(reconcile(ROOT,open_tracker(ROOT)),ensure_ascii=False))

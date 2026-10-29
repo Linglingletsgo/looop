@@ -1,6 +1,5 @@
 [Unit]
 Description=Sync approved PR merges, verify mainline, reconcile and report
-After=paperclip-board.service
 [Service]
 Type=oneshot
 WorkingDirectory=@ROOT@

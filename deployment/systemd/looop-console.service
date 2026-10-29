@@ -1,0 +1,18 @@
+[Unit]
+Description=looop owner console (loopback by default)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+# Loopback default: reachable only from this machine (or through `tailscale serve`).
+ExecStart=/usr/bin/python3 @ROOT@/bin/console-server.py
+# Tailnet bind without root instead (installed copy only): add `--host <tailscale IP>`,
+# `After=network-online.target tailscaled.service` and `Restart=always` + `RestartSec=5`,
+# and put `http://<tailscale IP>:3120` in data/local-settings.json console.origins.
+# The browser leg is then plain HTTP (see docs/standalone-architecture.md).
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

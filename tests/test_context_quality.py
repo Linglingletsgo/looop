@@ -10,7 +10,7 @@ class PlanningInputs(unittest.TestCase):
  tearDown=test_state_autonomy.SharedPlanning.tearDown
  setup_tick=test_state_autonomy.SharedPlanning.setup_tick
  setup_shared=test_state_autonomy.SharedPlanning.setup_shared
- board=test_state_autonomy.SharedPlanning.board
+ board=test_state_autonomy.SharedPlanning.job_ids
  def test_selected_context_contains_effective_decision_once_without_drafts_or_audit(self):
   self.setup_shared()
   for kind,body,confirmed in [('decision','Keep offline support',True),('propose','UNCONFIRMED-NOISE',False),('requirement','UNSELECTED-LOW-PRIORITY',True)]:
@@ -20,7 +20,7 @@ class PlanningInputs(unittest.TestCase):
   report['sources'][0].update(sha256='SOURCE-AUDIT-HASH',retrieved_at='AUDIT-TIMESTAMP')
   prompts=[]
   def model(*a,**k):prompts.append(a[2]);return json.dumps(self.value)
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model):autonomy.tick('test')
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=model):autonomy.tick('test')
   prompt=prompts[0]
   self.assertEqual(prompt.count('Test current stable behavior'),1)
   self.assertEqual(prompt.count('Keep offline support'),1)
@@ -29,13 +29,13 @@ class PlanningInputs(unittest.TestCase):
   self.assertIn('missing test alone',prompt)
  def test_no_material_gain_sleeps_without_dispatch(self):
   self.setup_shared();self.value['value_assessment']['material']=False;self.value['reason']='Only an absent test; no evidenced risk or meaningful contribution'
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value=json.dumps(self.value)) as run:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',return_value=json.dumps(self.value)) as run:
    autonomy.tick('test');autonomy.tick('test');self.assertEqual(run.call_count,1)
   self.assertEqual(self.store.read('test')['tasks'],{})
   self.assertFalse((self.root/'data/delivery-bindings').exists())
  def test_missing_value_contract_corrects_before_dispatch(self):
   self.setup_shared();bad=copy.deepcopy(self.value);bad.pop('value_assessment')
-  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'Board',self.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=[json.dumps(bad),json.dumps(self.value)]) as run:
+  with patch.object(autonomy,'ROOT',self.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(autonomy,'run',side_effect=[json.dumps(bad),json.dumps(self.value)]) as run:
    autonomy.tick('test');self.assertEqual(run.call_count,2)
   self.assertEqual(len(list((self.root/'data/delivery-bindings').glob('*.json'))),1)
 

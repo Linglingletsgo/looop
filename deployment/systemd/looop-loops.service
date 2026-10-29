@@ -1,6 +1,5 @@
 [Unit]
-Description=Launch bounded project planner in dedicated tmux
-After=paperclip-board.service
+Description=Launch bounded project planner and worker in dedicated tmux
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/bin:/bin

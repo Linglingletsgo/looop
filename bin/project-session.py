@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project-local context and independent work journal; Paperclip is optional."""
+"""Project-local context and independent work journal; no scheduler service required."""
 import argparse,fcntl,json,pathlib,subprocess,sys,uuid
 from lifecycle_io import validate_receipt
 from project_state import Store
@@ -79,7 +79,7 @@ def operate(repo,action,work_id=None,summary=None,runtime=None,lane=None,result_
    try:return refresh(repo,local,history=history)
    except (OSError,ValueError) as exc:return {**snapshot(repo,local),'refresh_error':str(exc),'stale':True}
   if action=='cached':return snapshot(repo,local)
-  if action=='sync':return {'accepted':publish(repo,local),'mirror':'Paperclip mirror is asynchronous when linked to a scheduler runtime'}
+  if action=='sync':return {'accepted':publish(repo,local)}
   receipt=None
   if action=='result':
    if not result_file:raise ValueError('result requires --result-file')

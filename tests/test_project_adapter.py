@@ -32,11 +32,11 @@ class Adapter(unittest.TestCase):
   p={'project_adapter':self.adapter,**{k:self.adapter[k] for k in ('workflow','checks','allowed_paths')}};check_policy(p)
   p['workflow']=p['workflow'][:-1]
   with self.assertRaises(ValueError):check_policy(p)
- def test_standalone_cli_imports_no_board_or_bridge(self):
+ def test_standalone_cli_imports_no_tracker_or_pipeline(self):
   script=pathlib.Path(__file__).resolve().parents[1]/'bin/agent-project.py'
-  code="import importlib.util,sys;spec=importlib.util.spec_from_file_location('cli',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);import delivery,lifecycle;assert 'board' not in sys.modules and 'bridge' not in sys.modules and 'pipeline' not in sys.modules"
+  code="import importlib.util,sys;spec=importlib.util.spec_from_file_location('cli',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);import delivery,lifecycle;assert 'tracker' not in sys.modules and 'jobs' not in sys.modules and 'pipeline' not in sys.modules"
   subprocess.run([sys.executable,'-c',code,str(script)],check=True,env={'PATH':'/usr/bin:/bin','PYTHONPATH':str(script.parent)})
- def test_standalone_and_board_share_core_and_no_replay(self):
+ def test_standalone_and_scheduler_share_core_and_no_replay(self):
   import test_delivery
   fixture=test_delivery.Delivery();fixture.setUp()
   try:
@@ -77,7 +77,7 @@ class Adapter(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'context-only'):check_policy({'project_adapter':a})
   self.assertIn('Mandatory engineering',context(self.repo,a,'product'))
 
- def test_new_local_binding_cannot_corrupt_board_linked_lane(self):
+ def test_new_local_binding_cannot_corrupt_scheduler_linked_lane(self):
   import test_delivery
   fixture=test_delivery.Delivery();fixture.setUp()
   try:
@@ -85,8 +85,8 @@ class Adapter(unittest.TestCase):
    a={**self.adapter,'roles':{},'rules':{},'allowed_paths':['app.py'],'workflow':fixture.policy['workflow']}
    with patch.object(cli,'ROOT',fixture.root):
     cli.configure('example',fixture.repo,a,fixture.policy)
-    p=fixture.root/'data/control.json';c=json.loads(p.read_text());c['projects']['example']['id']='native-board-id';p.write_text(json.dumps(c))
-    with self.assertRaisesRegex(ValueError,'Paperclip-linked'):cli.bind('example',fixture.packet,'new-job')
+    p=fixture.root/'data/control.json';c=json.loads(p.read_text());c['projects']['example']['id']='native-project-id';p.write_text(json.dumps(c))
+    with self.assertRaisesRegex(ValueError,'Registered lane'):cli.bind('example',fixture.packet,'new-job')
     self.assertEqual(Store(fixture.root).read('example')['tasks'],{})
   finally:fixture.tearDown()
 

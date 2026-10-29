@@ -158,7 +158,7 @@ class RealConsoleLocalMode(unittest.TestCase):
      connection.request('GET','/api/looop/status',headers={'Cookie':'looop_session='+token})
      response=connection.getresponse();data=response.read();connection.close()
     finally:instance.shutdown();instance.server_close();thread.join(5)
-   self.assertEqual(response.status,200);value=json.loads(data);self.assertEqual(value['tracker'],'local');self.assertEqual(value['console'],'standalone')
+   self.assertEqual(response.status,200);value=json.loads(data);self.assertEqual(value['tracker'],'local');self.assertNotIn('console',value)
    self.assertFalse(log.exists() and str(board_port) in log.read_text())
 
 if __name__=='__main__':unittest.main()

@@ -1,28 +1,8 @@
 """Import existing runtime records into the local job table under legacy ids."""
-import fcntl,json,pathlib,re
-from jobs import Jobs,STATUSES
+import fcntl,json,pathlib
+from jobs import Jobs
 from lifecycle import terminal
 from project_state import valid_lane
-from tracker import PaperclipTracker
-
-def _expired(exc):
- return getattr(exc,'code',None)==401 or re.search(r'(?:^|:\s*)401(?:\D|$)',str(exc).strip()) is not None
-
-class ReadOnlyBoard:
- """Board proxy for migration: only GET is allowed and a 401 never signs in."""
- def __init__(self,board):
-  self.board=board
- def api(self,method,path,data=None,retry=True):
-  if method!='GET':raise RuntimeError('migration board access is read-only: '+str(method))
-  try:return self.board.api(method,path,data,retry=False)
-  except Exception as exc:
-   if _expired(exc):raise RuntimeError('Paperclip session expired; sign in through the console and rerun') from None
-   raise
-
-class _TitleTracker(PaperclipTracker):
- def _issue(self,value,lane=None):
-  value=value if isinstance(value,dict) else {}
-  issue=super()._issue(value,lane);issue['title']=value.get('title');return issue
 
 def _assignee(kind,lane,status):
  return lane+':delivery' if kind=='delivery' and status in ('todo','in_progress') else 'owner'
@@ -117,31 +97,6 @@ def collect(root):
   seen.add(job['id']);jobs.append(job)
  return jobs,orphans,duplicates,errors
 
-def overlay(root,jobs,board):
- """Apply a read-only Paperclip overlay; errors stay local to one issue."""
- report={}
- if board is None:return report
- tracker=_TitleTracker(ReadOnlyBoard(board),root)
- for job in jobs:
-  try:
-   issue=tracker.get(job['id'])
-   lane=issue.get('lane');status=issue.get('status');title=issue.get('title')
-   if lane!=job['lane']:
-    report[job['id']]={'result':'lane_mismatch','lane_mismatch':True,'lane':lane,'status':status,'title':title};continue
-   if status not in STATUSES:raise ValueError('Unsupported board status: '+repr(status))
-   if not isinstance(title,str):title=job['title']
-   differs=status!=job['status'] or title!=job['title']
-   job['status']=status;job['title']=title
-   job['assignee']=_assignee(job['kind'],job['lane'],status)
-   report[job['id']]={'result':'board_differs' if differs else 'same','differs':differs,'lane_mismatch':False,'lane':lane,'status':status,'title':title}
-  except Exception as exc:report[job['id']]={'result':'error','error':str(exc)}
- return report
-
-def _board_failure(report,job_id):
- entry=report.get(job_id) or {}
- if entry.get('result')!='error':return None
- return entry.get('error') or 'board overlay failed'
-
 def _row(job,result,**extra):
  return {name:job[name] for name in ('id','kind','lane','status','assignee','source')}|{'result':result}|extra
 
@@ -149,28 +104,22 @@ def _counts(rows,orphans,duplicates,conflicts,errors):
  result={'jobs':len(rows),'total':len(rows),'orphans':len(orphans),'duplicates':len(duplicates),
   'conflicts':len(conflicts),'errors':len(errors)}
  result.update({name:sum(row['result']==name for row in rows) for name in
-  ('planned','created','existing','board_error','conflict','error')})
+  ('planned','created','existing','conflict','error')})
  return result
 
-def migrate(root,apply=False,board=None):
+def migrate(root,apply=False):
  root=pathlib.Path(root).expanduser().resolve()
  if not (root/'data/control.json').is_file():raise ValueError('Not a runtime root (no data/control.json): '+str(root))
- jobs,orphans,duplicates,errors=collect(root);report=overlay(root,jobs,board)
+ jobs,orphans,duplicates,errors=collect(root)
  if not apply:
-  rows=[]
-  for job in jobs:
-   failed=_board_failure(report,job['id'])
-   rows.append(_row(job,'board_error',error=failed) if failed else _row(job,'planned'))
+  rows=[_row(job,'planned') for job in jobs]
   return {'mode':'dry-run','counts':_counts(rows,orphans,duplicates,[],errors),'jobs':rows,
-   'orphans':orphans,'duplicates':duplicates,'errors':errors,'conflicts':[],'board':report}
+   'orphans':orphans,'duplicates':duplicates,'errors':errors,'conflicts':[]}
  lock=root/'data/locks/migrate-jobs';lock.parent.mkdir(parents=True,exist_ok=True)
  with lock.open('w') as handle:
   fcntl.flock(handle,fcntl.LOCK_EX)
   store=Jobs(root);rows=[];conflicts=[];errors=list(errors)
   for job in jobs:
-   failed=_board_failure(report,job['id'])
-   if failed is not None:
-    rows.append(_row(job,'board_error',error=failed));continue
    existing=store.get(job['id'])
    if existing:
     if existing['lane']!=job['lane'] or existing['kind']!=job['kind']:
@@ -186,10 +135,10 @@ def migrate(root,apply=False,board=None):
     errors.append({'source':job['source'],'error':str(exc)})
     rows.append(_row(job,'error',error=str(exc)))
   return {'mode':'apply','counts':_counts(rows,orphans,duplicates,conflicts,errors),'jobs':rows,
-   'orphans':orphans,'duplicates':duplicates,'errors':errors,'conflicts':conflicts,'board':report}
+   'orphans':orphans,'duplicates':duplicates,'errors':errors,'conflicts':conflicts}
 
-def plan(root,board=None):
- return migrate(root,apply=False,board=board)
+def plan(root):
+ return migrate(root,apply=False)
 
-def apply(root,board=None):
- return migrate(root,apply=True,board=board)
+def apply(root):
+ return migrate(root,apply=True)

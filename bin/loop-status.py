@@ -1,6 +1,6 @@
-"""One quiet board status issue; update description only when meaningful state changes."""
+"""One quiet status job; update its description only when meaningful state changes."""
 import json
-from board import ROOT,Board
+from runtime import ROOT
 from tracker import open_tracker
 from lifecycle import save
 from health import progress
@@ -10,7 +10,7 @@ def scope_description(mandate):
  return '允许文件：由当前任务 Packet 确定，并执行项目范围检查'
 
 def report(lane):
- b=open_tracker(ROOT,Board);rows=['# 自动队列状态','范围：既有行为的合成回归；PM定义契约 → Builder → 检查 → Reviewer → 按项目配置的发布/合并 → 主线复验。Acceptance仅在项目workflow显式配置时执行。','不按总时长终止；15分钟无事件只提示。']
+ b=open_tracker(ROOT);rows=['# 自动队列状态','范围：既有行为的合成回归；PM定义契约 → Builder → 检查 → Reviewer → 按项目配置的发布/合并 → 主线复验。Acceptance仅在项目workflow显式配置时执行。','不按总时长终止；15分钟无事件只提示。']
  from project_state import configured_store
  store=configured_store(ROOT)
  if store:

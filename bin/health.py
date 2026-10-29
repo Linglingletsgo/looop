@@ -33,9 +33,8 @@ def reconcile(root,tracker):
     if not (root/'data/runs'/run_id/'handoff.md').is_file():continue
     try:t=tracker.get(issue)
     except KeyError:
-     # Local jobs are the only truth; a legacy bridge row without one has no board state.
-     if tracker.name=='local':continue
-     raise
+     # Local jobs are the only truth; a legacy bridge row without one has no job state.
+     continue
     # Preserve an explicit human cancellation. Repair drift only with durable completion proof.
     if t['status']=='cancelled':continue
     if t['status']!='done' or tracker.agent_assigned(t):
@@ -49,8 +48,7 @@ def reconcile(root,tracker):
   try:t=tracker.get(folder.name)
   except KeyError:
    # Local jobs are the only truth: a receipt without a job row has no projection to repair.
-   if tracker.name=='local':continue
-   raise
+   continue
   if status and t['status']!='cancelled' and (t['status']!=status or tracker.agent_assigned(t)):
    tracker.update(folder.name,status=status,assignee=CLEAR_AGENT,comment='交付终态对账：'+state['state']+'；未重复执行。');count+=1
   observe(folder,tracker,folder.name)
@@ -60,18 +58,11 @@ def reconcile(root,tracker):
   if state.get('issue'):
    try:observe(folder,tracker,state['issue'])
    except KeyError:
-    # e.g. a Paperclip-era planning attempt after switching to local jobs.
-    if tracker.name!='local':raise
+    # e.g. a planning attempt whose job was never migrated into the local table.
     continue
-   if tracker.name=='paperclip':
-    try:
-     from metrics import record
-     config=json.loads((root/'data/control.json').read_text());lane=folder.parent.name;cfg=config['projects'][lane]
-     record(tracker.board,folder,cfg.get('company',config.get('company')),config['agents'][lane+':product'],state['issue'],cfg['id'])
-    except Exception:print('Planning usage import pending:',folder.name)
  return count
 
 if __name__=='__main__':
- from board import ROOT,Board
+ from runtime import ROOT
  from tracker import open_tracker
- print('Reconciled:',reconcile(ROOT,open_tracker(ROOT,Board)))
+ print('Reconciled:',reconcile(ROOT,open_tracker(ROOT)))

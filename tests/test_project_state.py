@@ -47,20 +47,15 @@ class State(unittest.TestCase):
   self.s.bind('test','job',{'title':'old'})
   self.s.bind('test','job',{'title':'old','execution_notes':'untrusted draft'})
   self.assertNotIn('execution_notes',self.s.read('test')['tasks']['job']['packet'])
- def test_sync_crash_after_create_reuses_marker(self):
+ def test_sync_acknowledges_created_intent_outbox_rows(self):
   path=pathlib.Path(__file__).resolve().parents[1]/'bin/state-sync.py';spec=importlib.util.spec_from_file_location('state_sync',path);sync=importlib.util.module_from_spec(spec);spec.loader.exec_module(sync)
-  (self.root/'data/control.json').write_text(json.dumps({'company':'c','projects':{'test':{'id':'p'}}}))
-  self.submit();rows=[]
-  class Board:
-   def api(self,m,p,d=None):
-    if m=='GET':return rows
-    if m=='POST':
-     rows.append({'id':'issue',**d});raise ConnectionError('Response lost after server created issue')
-    rows[0].update(d);return rows[0]
-  with self.assertRaises(ConnectionError):sync.sync(self.root,Board())
+  (self.root/'data/control.json').write_text(json.dumps({'projects':{'test':{'id':None}}}))
+  self.submit()
   with self.s.connection() as c:self.assertEqual(c.execute('SELECT count(*) FROM outbox WHERE delivered=0').fetchone()[0],1)
-  sync.sync(self.root,Board());self.assertEqual(len(rows),1)
+  sync.sync(self.root)
   with self.s.connection() as c:self.assertEqual(c.execute('SELECT count(*) FROM outbox WHERE delivered=0').fetchone()[0],0)
+  self.assertEqual(len(self.s.read('test')['intents']),1)
+  sync.sync(self.root);self.assertEqual(len(self.s.read('test')['intents']),1)
 
  def test_uncertain_merge_does_not_reopen_change_window(self):
   self.s.bind('test','job',{});self.s.transition('test','job','waiting_merge',import_existing=True)

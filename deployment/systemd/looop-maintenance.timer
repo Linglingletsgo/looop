@@ -3,6 +3,6 @@ Description=Sync human PR decisions every two minutes
 [Timer]
 OnBootSec=1min
 OnUnitInactiveSec=2min
-Unit=paperclip-pr-sync.service
+Unit=looop-maintenance.service
 [Install]
 WantedBy=timers.target

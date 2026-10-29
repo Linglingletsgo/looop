@@ -3,77 +3,10 @@ from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'bin'))
 import process_owner
 from jobs import Jobs
-from tracker import LocalTracker,PaperclipTracker,as_tracker,open_tracker
+from tracker import LocalTracker,TrackerConfigError,open_tracker,resolve_tracker
 import binding_requests
 import test_autonomy
 
-CONFIG={'company':'fallback','projects':{'demo':{'id':'project-demo','company':'company-demo'},'other':{'id':'project-other'}},'agents':{'demo:delivery':'agent-demo','demo:planning':'agent-pm'}}
-
-class FakeBoard:
- def __init__(self,issues=None):
-  self.calls=[];self.issues=issues or {}
- def api(self,method,path,data=None):
-  self.calls.append((method,path,data))
-  if path=='/auth/get-session':return {'user':{'id':'human'}}
-  if method=='POST':return {'id':'created','identifier':'DEMO-created'}
-  if method=='GET' and path.startswith('/companies/'):return list(self.issues.values())
-  if method=='GET' and path.startswith('/issues/'):
-   issue=self.issues.get(path.split('/')[-1])
-   if issue is None:raise KeyError(path)
-   return issue
-  if method=='GET' and path.startswith('/agents/'):return {'id':path.split('/')[-1],'status':'running'}
-  return None
-
-class Paperclip(unittest.TestCase):
- def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=pathlib.Path(self.tmp.name)
-  (self.root/'data').mkdir();(self.root/'data/control.json').write_text(json.dumps(CONFIG))
-  self.issues={'issue':{'id':'issue','identifier':'DEMO-1','projectId':'project-demo','status':'backlog','assigneeAgentId':'agent-demo','description':'has marker'}}
-  self.board=FakeBoard(self.issues);self.tracker=PaperclipTracker(self.board,self.root)
- def test_create_maps_lane_role_and_owner_to_board_payload(self):
-  self.tracker.create('demo','delivery','Title','todo','Body',assignee='demo:delivery')
-  self.assertEqual(self.board.calls[-1],('POST','/companies/company-demo/issues',{'projectId':'project-demo','title':'Title','status':'todo','description':'Body','assigneeAgentId':'agent-demo','assigneeUserId':None}))
-  issue=self.tracker.create('other','status','Status','in_progress','Body',assignee='owner')
-  self.assertEqual(self.board.calls[-1][1],'/companies/fallback/issues')
-  self.assertEqual(self.board.calls[-1][2],{'projectId':'project-other','title':'Status','status':'in_progress','description':'Body','assigneeUserId':'human'})
-  self.assertEqual(issue['lane'],'other');self.assertEqual(issue['assignee'],'owner')
- def test_get_normalizes_lane_role_and_owner(self):
-  issue=self.tracker.get('issue')
-  self.assertEqual(issue,{'id':'issue','identifier':'DEMO-1','lane':'demo','status':'backlog','assignee':'demo:delivery','description':'has marker'})
-  self.issues['issue'].update(projectId='unknown',assigneeAgentId=None,assigneeUserId='human')
-  self.assertEqual(self.tracker.get('issue')['lane'],None);self.assertEqual(self.tracker.get('issue')['assignee'],'owner')
- def test_update_and_find_and_running_use_same_routes(self):
-  self.tracker.update('issue',status='cancelled',assignee='demo:planning',comment='why')
-  self.assertEqual(self.board.calls[-1],('PATCH','/issues/issue',{'status':'cancelled','assigneeAgentId':'agent-pm','assigneeUserId':None,'comment':'why'}))
-  self.tracker.update('issue',description='new',assignee=None)
-  self.assertEqual(self.board.calls[-1][2],{'assigneeAgentId':None,'assigneeUserId':None,'description':'new'})
-  self.tracker.update('issue',**{'status':'blocked','comment':'x','unblockDescriptor':{'owner':'board'}})
-  self.assertEqual(self.board.calls[-1][2],{'status':'blocked','comment':'x','unblockDescriptor':{'owner':'board'}})
-  self.assertEqual([i['id'] for i in self.tracker.find('demo','marker')],['issue'])
-  self.assertEqual(self.board.calls[-1],('GET','/companies/company-demo/issues?projectId=project-demo',None))
-  self.assertEqual(self.tracker.find('demo','absent'),[])
-  self.assertTrue(self.tracker.role_running('demo:delivery'))
-  self.assertEqual(self.tracker.owner(),'human');self.assertEqual(self.board.calls[-1],('GET','/auth/get-session',None))
-  self.assertEqual(self.tracker.owner(),'human');self.assertEqual(len([c for c in self.board.calls if c[1]=='/auth/get-session']),1)
-  self.assertFalse(self.tracker.idempotent_create)
- def test_recovery_queries_journal_scope_and_fails_closed(self):
-  self.tracker.find('demo','marker','company-old','project-old')
-  self.assertEqual(self.board.calls[-1],('GET','/companies/company-old/issues?projectId=project-old',None))
-  self.tracker.create('demo','delivery','T','backlog','B',company='company-old')
-  self.assertEqual(self.board.calls[-1][1],'/companies/company-old/issues')
-  del self.issues['issue']['projectId']
-  self.assertIsNone(self.tracker.find('demo','marker')[0]['lane'])
- def test_unconfigured_role_key_fails_before_any_call(self):
-  calls=len(self.board.calls)
-  for action in (lambda:self.tracker.role_running('other:delivery'),lambda:self.tracker.update('issue',status='todo',assignee='other:delivery')):
-   with self.assertRaises(KeyError):action()
-  self.assertEqual(len(self.board.calls),calls)
-  self.tracker.role_running('agent-raw');self.assertEqual(self.board.calls[-1][1],'/agents/agent-raw')
-  with self.assertRaises(KeyError):self.tracker.require_role('other:delivery')
-  self.tracker.require_role('demo:delivery');self.assertEqual(len(self.board.calls),calls+1)
- def test_raw_board_wraps_into_paperclip_tracker(self):
-  wrapped=as_tracker(FakeBoard(),self.root)
-  self.assertIsInstance(wrapped,PaperclipTracker);self.assertIs(as_tracker(wrapped,self.root),wrapped)
 
 class Local(unittest.TestCase):
  def setUp(self):
@@ -116,19 +49,33 @@ class Selection(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=pathlib.Path(self.tmp.name);(self.root/'data').mkdir()
  def settings(self,value):
   (self.root/'data/local-settings.json').write_text(value if isinstance(value,str) else json.dumps(value))
- def test_missing_or_invalid_settings_stay_on_paperclip(self):
-  for value in (None,'{not json',{}, {'tracker':'paperclip'},{'tracker':''},[]):
+ def test_open_tracker_always_returns_the_local_tracker(self):
+  for value in (None,{},{'tracker':'local'},{'tracker':'local','board_url':'http://127.0.0.1:3101'}):
    with self.subTest(value=value):
     settings=self.root/'data/local-settings.json'
     if settings.exists():settings.unlink()
     if value is not None:self.settings(value)
-    calls=[]
-    tracker=open_tracker(self.root,lambda:calls.append(1) or FakeBoard())
-    self.assertIsInstance(tracker,PaperclipTracker);self.assertEqual(calls,[1])
- def test_local_selection_never_builds_a_board(self):
-  self.settings({'tracker':'local'});calls=[]
-  tracker=open_tracker(self.root,lambda:calls.append(1) or FakeBoard())
-  self.assertIsInstance(tracker,LocalTracker);self.assertEqual(calls,[])
+    tracker=open_tracker(self.root)
+    self.assertIsInstance(tracker,LocalTracker);self.assertEqual(tracker.name,'local')
+ def test_unsupported_tracker_setting_is_a_clear_startup_error(self):
+  for value in ({'tracker':'paperclip'},{'tracker':''},{'tracker':'remote'}):
+   with self.subTest(value=value):
+    self.settings(value)
+    with self.assertRaisesRegex(TrackerConfigError,'Unsupported tracker') as raised:open_tracker(self.root)
+    self.assertEqual(raised.exception.path,self.root/'data/local-settings.json')
+    self.assertIn('paperclip-last',str(raised.exception))
+ def test_non_object_settings_file_is_a_clear_startup_error(self):
+  for value in ([],None,5):
+   with self.subTest(value=value):
+    self.settings(value)
+    with self.assertRaisesRegex(TrackerConfigError,'JSON object'):resolve_tracker(self.root)
+  (self.root/'data/local-settings.json').write_text('{bad')
+  with self.assertRaisesRegex(TrackerConfigError,'not valid JSON'):resolve_tracker(self.root)
+ def test_settings_are_not_rewritten(self):
+  self.settings({'tracker':'local','pm_skills':{'noncommercial':True}})
+  before=(self.root/'data/local-settings.json').read_text()
+  open_tracker(self.root);resolve_tracker(self.root)
+  self.assertEqual((self.root/'data/local-settings.json').read_text(),before)
 
 class LocalBinding(unittest.TestCase):
  setUp=test_autonomy.Autonomy.setUp
@@ -183,20 +130,4 @@ class LocalBinding(unittest.TestCase):
   self.prepare();self.folder.mkdir(parents=True)
   (self.folder/'binding-request.json').write_text(json.dumps({'state':'posting','marker':'<!-- m -->','binding':self.binding,'company':'company','payload':self.payload()}))
   result=binding_requests.reconcile(self.root,self.tracker)
-  self.assertEqual(result[0]['state'],'deferred');self.assertIn('predates the local tracker',result[0]['reason'])
-
-class UnconfiguredDelivery(unittest.TestCase):
- setUp=test_autonomy.Autonomy.setUp
- tearDown=test_autonomy.Autonomy.tearDown
- setup_tick=test_autonomy.Autonomy.setup_tick
- def test_tick_fails_before_any_side_effect(self):
-  self.setup_tick();control=self.root/'data/control.json'
-  value=json.loads(control.read_text());value['agents']={};control.write_text(json.dumps(value))
-  calls=[]
-  class Board:
-   def api(self,method,path,data=None):calls.append((method,path));return {'user':{'id':'owner'}}
-  with patch.object(test_autonomy.autonomy,'ROOT',self.root),patch.object(test_autonomy.autonomy,'Board',Board),patch.object(test_autonomy.autonomy,'validate_profile',return_value={'repository_revision':self.sha}),patch.object(test_autonomy.autonomy,'run') as run:
-   with self.assertRaises(KeyError):test_autonomy.autonomy.tick('test')
-  self.assertEqual(calls,[]);run.assert_not_called()
-  self.assertFalse((self.root/'data/autonomy/test').exists())
-  self.assertFalse((self.root/'data/delivery-bindings').exists())
+  self.assertEqual(result[0]['state'],'deferred');self.assertIn('predates the local job table',result[0]['reason'])

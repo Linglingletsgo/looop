@@ -1,6 +1,6 @@
 # Agent 工作流
 
-looop 负责队列、并发、启动原生 Harness、结果文件结构与身份校验、版本冲突、重试和看板投影。它不运行项目测试或实验、不推导测试命令、不解释证据、不判断产品是否完成。Git 工作区管理、PR 发布和既有批准后的合并仍由调度侧按项目配置执行；不新增审批，也不自动部署。
+looop 负责队列、并发、启动原生 Harness、结果文件结构与身份校验、版本冲突、重试和本地任务队列投影。它不运行项目测试或实验、不推导测试命令、不解释证据、不判断产品是否完成。Git 工作区管理、PR 发布和既有批准后的合并仍由调度侧按项目配置执行；不新增审批，也不自动部署。
 
 项目已有角色和流程优先。PM 调研并提出目标和任务；Builder 实现；项目定义的验证角色或默认 QA 使用原生 Harness 运行检查并保存证据；Reviewer 独立审查；PM 根据当前代码和执行证据判断目标是否完成。没有配置的 Acceptance 不自动加入。
 
@@ -20,9 +20,9 @@ looop 负责队列、并发、启动原生 Harness、结果文件结构与身份
 
 ## 当前状态
 
-项目级 `.agent/local/runtime/data/project-state/<lane>.current.json` 是权威当前状态。`current.json` 为兼容读取别名；SQLite 只保留事务索引、幂等事件及看板同步队列。Paperclip 是投影，不是另一份产品状态。
+项目级 `.agent/local/runtime/data/project-state/<lane>.current.json` 是权威当前状态。`current.json` 为兼容读取别名；SQLite 只保留事务索引、幂等事件及本地任务队列。任务状态是执行投影，不是另一份产品状态。
 
-独立对话使用项目内 `project-session.py context/start/progress/finish`，其文件写入使用相同版本校验和锁。Agent 通过角色结果文件记录执行结果，调度器只验证所属任务并流转。不要直接改看板或数据库伪造审核通过，不将历史 handoff 当作当前授权。
+独立对话使用项目内 `project-session.py context/start/progress/finish`，其文件写入使用相同版本校验和锁。Agent 通过角色结果文件记录执行结果，调度器只验证所属任务并流转。不要直接改任务队列或数据库伪造审核通过，不将历史 handoff 当作当前授权。
 
 当前状态覆盖更新；事件、日志和运行产物按 retention.json 保留。文件与索引的提交使用恢复标记，异常时保留现场。迁移前状态保存在 data/backups，不删除原项目。
 

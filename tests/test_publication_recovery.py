@@ -16,18 +16,18 @@ class Publication(unittest.TestCase):
  def save(self):(self.folder/'state.json').write_text(json.dumps(self.state))
  def reconcile(self,prs):
   with patch.object(self.m.subprocess,'check_output',side_effect=['/tmp/common',json.dumps(prs).encode()]) as gh:
-   result=self.m.reconcile(self.root,None)
+   result=self.m.reconcile(self.root)
    self.assertFalse(any('create' in x.args[0] or 'push' in x.args[0] for x in gh.call_args_list));return result
  def test_existing_pr_restores_receipt_and_never_creates(self):
   self.assertEqual(self.reconcile([self.pr])[0]['state'],'reconciled');self.assertEqual(json.loads((self.folder/'state.json').read_text())['state'],'waiting_for_merge')
-  with patch.object(self.m.subprocess,'check_output') as gh:self.m.reconcile(self.root,None);gh.assert_not_called()
+  with patch.object(self.m.subprocess,'check_output') as gh:self.m.reconcile(self.root);gh.assert_not_called()
  def test_missing_ambiguous_fork_or_changed_sha_requires_attention(self):
   for prs in ([],[self.pr,self.pr],[{**self.pr,'headRefOid':'other'}],[{**self.pr,'isCrossRepository':True}]):
    self.assertEqual(self.reconcile(prs)[0]['state'],'needs_attention');self.assertEqual(json.loads((self.folder/'state.json').read_text())['state'],'pr_ready')
  def test_alive_or_unknown_worker_not_touched(self):
   for owner in (identity(),None):
    self.state['owner']=owner;self.save()
-   with patch.object(self.m.subprocess,'check_output') as gh:self.m.reconcile(self.root,None);gh.assert_not_called()
+   with patch.object(self.m.subprocess,'check_output') as gh:self.m.reconcile(self.root);gh.assert_not_called()
  def test_lost_response_exception_and_merged_pr_reconcile(self):
   self.state.update(state='blocked',failed_stage='pr_ready');self.save()
   self.assertEqual(self.reconcile([{**self.pr,'state':'MERGED','mergeCommit':{'oid':'merge-sha'}}])[0]['state'],'reconciled');self.assertEqual(json.loads((self.folder/'state.json').read_text())['merge_commit'],'merge-sha')

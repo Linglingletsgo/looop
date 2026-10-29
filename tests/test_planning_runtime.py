@@ -84,7 +84,7 @@ class IntegratedPlanning(unittest.TestCase):
   fixture=test_state_autonomy.SharedPlanning();fixture.setUp()
   try:
    fixture.setup_shared()
-   with patch.object(autonomy,'ROOT',fixture.root),patch.object(autonomy,'Board',fixture.board()),patch.object(autonomy,'validate_profile',return_value={'repository_revision':fixture.sha}),patch.object(autonomy,'run',side_effect=[RuntimeError('Model connection failed'),json.dumps(fixture.value)]) as run,patch('planning_runtime.time.sleep'):
+   with patch.object(autonomy,'ROOT',fixture.root),patch.object(autonomy,'validate_profile',return_value={'repository_revision':fixture.sha}),patch.object(autonomy,'run',side_effect=[RuntimeError('Model connection failed'),json.dumps(fixture.value)]) as run,patch('planning_runtime.time.sleep'):
     autonomy.tick('test');autonomy.tick('test');self.assertEqual(run.call_count,2)
    self.assertEqual(len(list((fixture.root/'data/delivery-bindings').glob('*.json'))),1)
    self.assertEqual(fixture.store.read('test')['intents'][fixture.intent]['status'],'scheduled')

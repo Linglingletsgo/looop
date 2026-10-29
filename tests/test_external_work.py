@@ -27,20 +27,14 @@ class ExternalWork(unittest.TestCase):
   moved=self.root/'unavailable';remote.rename(moved);r=m.operate(repo,'start','one','offline work');self.assertEqual(r['pending_events'],1);self.assertEqual(m.operate(repo,'context')['local_pending_work']['one']['status'],'active')
   moved.rename(remote);r=m.operate(repo,'sync');self.assertEqual(len(r['accepted']),1);self.assertEqual(m.operate(repo,'context')['project_state']['phase'],'external_work')
 
- def test_board_mirrors_external_work_without_delivery_task(self):
+ def test_sync_records_external_work_and_acknowledges_the_outbox(self):
   spec=importlib.util.spec_from_file_location('state_sync',pathlib.Path(__file__).resolve().parents[1]/'bin/state-sync.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-  class Board:
-   def __init__(self):self.issues=[];self.posts=0
-   def api(self,method,path,data=None):
-    if path=='/auth/get-session':return {'user':{'id':'owner'}}
-    if method=='GET':return self.issues
-    if method=='POST':self.posts+=1;issue={'id':'issue-one',**data};self.issues.append(issue);return issue
-    if method=='PATCH':self.issues[0].update(data);return self.issues[0]
-  (self.root/'data/delivery-bindings').mkdir();(self.root/'data/control.json').write_text(json.dumps({'company':'company','projects':{'demo':{'id':'project'}}}))
-  s=self.store;s.external_work('demo',{'action':'start','id':'one','summary':'manual'},0,'start','chat');board=Board();module.sync(self.root,board)
-  self.assertEqual(board.posts,1);self.assertIn('自述',board.issues[0]['description'])
-  s.external_work('demo',{'action':'finish','id':'one','summary':'finished'},1,'finish','chat');module.sync(self.root,board)
-  self.assertEqual(board.posts,1);self.assertEqual(board.issues[0]['status'],'done');self.assertEqual(s.read('demo')['tasks'],{})
+  (self.root/'data/delivery-bindings').mkdir();(self.root/'data/control.json').write_text(json.dumps({'projects':{'demo':{'id':None}}}))
+  s=self.store;s.external_work('demo',{'action':'start','id':'one','summary':'manual'},0,'start','chat');self.assertTrue(module.sync(self.root))
+  self.assertEqual(s.read('demo')['phase'],'external_work')
+  s.external_work('demo',{'action':'finish','id':'one','summary':'finished'},1,'finish','chat');self.assertTrue(module.sync(self.root))
+  with s.connection('demo') as c:self.assertEqual(c.execute('SELECT count(*) FROM outbox WHERE lane=? AND delivered=0',('demo',)).fetchone()[0],0)
+  self.assertEqual(s.read('demo')['tasks'],{})
 
  def test_standalone_connect_imports_progress_without_duplicate(self):
   repo=self.root/'repo';repo.mkdir();m.operate(repo,'init');m.operate(repo,'start','one','Started locally');m.operate(repo,'finish','one','Finished locally')

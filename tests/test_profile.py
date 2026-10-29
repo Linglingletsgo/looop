@@ -83,6 +83,25 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'repository_revision_changed'):
             profile.check(p)
 
+    def test_validate_profile_runs_full_check_and_refuses_stale_revision(self):
+        import sys
+        from unittest import mock
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bin'))
+        import project_adapter, runtime
+        runtime_root = Path(self.temp.name) / 'runtime'
+        (runtime_root / 'profiles').mkdir(parents=True)
+        (runtime_root / 'bin').mkdir()
+        (runtime_root / 'bin/project-profile.py').symlink_to(Path(__file__).resolve().parents[1] / 'bin/project-profile.py')
+        (runtime_root / 'profiles/p.json').write_text(json.dumps(profile.discover(self.root)))
+        with mock.patch.object(runtime, 'ROOT', runtime_root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(project_adapter.validate_profile('p.json')['repository_root'], str(self.root.resolve()))
+            self.put('readme.txt', 'new fixture revision')
+            self.commit()
+            with self.assertRaisesRegex(ValueError, 'repository_revision_changed'):
+                project_adapter.validate_profile('p.json')
+            with self.assertRaisesRegex(ValueError, 'under profiles'):
+                project_adapter.validate_profile('../p.json')
+
     def test_symlink_cannot_read_outside_repo(self):
         outside = Path(self.temp.name) / 'outside.md'
         outside.write_text('private-synthetic-marker')

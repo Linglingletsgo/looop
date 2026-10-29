@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-kit_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Only Paperclip's board runs here. Workers need a separately confined runtime.
-exec "$kit_root/bin/paperclip" run

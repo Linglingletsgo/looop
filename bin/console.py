@@ -6,15 +6,15 @@ from project_state import Store
 from loop_control import view
 from product_goals import summary as goal_summary
 from planning_intervention import preview as planning_attention
-from tracker import local_mode
+from tracker import resolve_tracker
 
 LABELS={'idle':'等待有价值的工作','ready':'需求已就绪','waiting':'等待','discovering':'PM 选题中','queued':'排队中','defining':'定义任务','building':'开发中','checking':'检查中','reviewing':'审查中','acceptance':'项目验收','pr_ready':'PR 已就绪','waiting_merge':'等待合并','verifying':'主线复验','completed':'已完成','blocked':'执行受阻','waiting_decision':'等待决定','external_work':'独立开发中','cancelled':'已取消'}
 def read(path,default):
  try:return json.loads(path.read_text())
  except (OSError,ValueError):return default
 
-def status(root=ROOT,companies=()):
- prefixes={c["id"]:c["issuePrefix"] for c in companies}
+def status(root=ROOT):
+ tracker=resolve_tracker(root)
  root=pathlib.Path(root);config=read(root/'data/control.json',{});store=Store(root);projects=[]
  for lane,cfg in config.get('projects',{}).items():
   policy=read(root/'data/autonomy-policies'/(lane+'.json'),None)
@@ -36,7 +36,7 @@ def status(root=ROOT,companies=()):
    evidence=task.get('evidence',{});recent.append({'id':task['id'],'title':task.get('packet',{}).get('title',task['id']),'phase':task['phase'],'label':LABELS.get(task['phase'],task['phase']),'sha':evidence.get('target_sha'),'pr_url':evidence.get('pr_url'),'holds':len(task.get('holds',[]))})
   works=[{'id':w['id'],'status':w['status'],'summary':w['summary'],'updated_at':w.get('updated_at'),'verification':'self_reported'} for w in list(doc.get('external_work',{}).values())[-3:]]
   # Return a narrow projection, never configs, role prompts, raw logs or credentials.
-  projects.append({'id':lane,'name':{'gtp':'Goal to People','mainline':'WOS 主线'}.get(lane,cfg.get('name',lane)),'company':cfg.get('company',config.get('company')),'paperclip_id':cfg.get('id'),'company_prefix':prefixes.get(cfg.get('company',config.get('company'))),'mode':mode,'loop':loop,'test':test,'research':{k:v for k,v in (doc.get('research') or {}).items() if k in ('status','question','finding','counterevidence','recommendation','skill_usage')},'product_goal':goal_summary(doc),'scope_note':'当前仅允许测试验证，不能实现新的产品能力。' if (policy or {}).get('task_kind')=='test_only' else None,'phase':phase,'label':LABELS.get(phase,phase),'next_action':'处理 PM 规划受阻后重新规划。' if planning and not active else doc['next_action'],'revision':doc['revision'],'updated_at':doc.get('updated_at'),'workflow':workflow,'tasks':recent,'active_count':len(active),'attention':attention[:10],'independent_work':works,'intents':[{'id':i['id'],'kind':i['kind'],'title':i['title'],'body':i['body'][:4000],'status':i['status'],'priority':i['priority']} for i in intents[-5:]]})
+  projects.append({'id':lane,'name':{'gtp':'Goal to People','mainline':'WOS 主线'}.get(lane,cfg.get('name',lane)),'mode':mode,'loop':loop,'test':test,'research':{k:v for k,v in (doc.get('research') or {}).items() if k in ('status','question','finding','counterevidence','recommendation','skill_usage')},'product_goal':goal_summary(doc),'scope_note':'当前仅允许测试验证，不能实现新的产品能力。' if (policy or {}).get('task_kind')=='test_only' else None,'phase':phase,'label':LABELS.get(phase,phase),'next_action':'处理 PM 规划受阻后重新规划。' if planning and not active else doc['next_action'],'revision':doc['revision'],'updated_at':doc.get('updated_at'),'workflow':workflow,'tasks':recent,'active_count':len(active),'attention':attention[:10],'independent_work':works,'intents':[{'id':i['id'],'kind':i['kind'],'title':i['title'],'body':i['body'][:4000],'status':i['status'],'priority':i['priority']} for i in intents[-5:]]})
  from execution_settings import read as read_settings
  selected=set(read_settings(root).get('routes',{}).values())
  providers=[]
@@ -45,11 +45,7 @@ def status(root=ROOT,companies=()):
   p=read(root/'data'/('quota-'+name+'.json'),None)
   providers.append({'name':name,'state':'cooldown' if p and p.get('resume_at') else 'needs_action' if p else 'available','resume_at':p.get('resume_at') if p else None,'remaining':'unknown'})
  from execution_settings import public
- return {'execution_settings':public(root),'generated_at':time.time(),'tracker':'local' if local_mode(root) else 'paperclip','projects':projects,'providers':providers}
+ return {'execution_settings':public(root),'generated_at':time.time(),'tracker':tracker,'projects':projects,'providers':providers}
 
 if __name__=='__main__':
- if local_mode(ROOT):result=status(companies=())
- else:
-  from board import Board
-  result=status(companies=Board().api("GET","/companies"))
- print(json.dumps(result,ensure_ascii=False))
+ print(json.dumps(status(),ensure_ascii=False))

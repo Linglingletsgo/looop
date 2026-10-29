@@ -4,7 +4,7 @@ from process_owner import alive
 from lifecycle import save
 from gates import require_pr
 
-def reconcile(root,board):
+def reconcile(root):
  results=[]
  for path in sorted((root/'data/delivery-bindings').glob('*.json')):
   try:
@@ -33,6 +33,5 @@ def reconcile(root,board):
   except Exception as exc:results.append({'job':path.stem,'state':'needs_attention','reason':str(exc)})
  save(root/'data/publication-recovery-status.json',{'results':results});return results
 if __name__=='__main__':
- from board import ROOT,Board
- from tracker import open_tracker
- print(json.dumps(reconcile(ROOT,open_tracker(ROOT,Board)),ensure_ascii=False))
+ from runtime import ROOT
+ print(json.dumps(reconcile(ROOT),ensure_ascii=False))

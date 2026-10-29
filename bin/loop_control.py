@@ -20,8 +20,8 @@ def switch(root,lane,mode,expected,request_id):
  root=pathlib.Path(root);store=Store(root)
  if mode!='paused':
   cfg=read(root/'data/control.json',{});policy=read(root/'data/delivery-policies'/(lane+'.json'),{})
-  if not view(root,lane)['allowed'] or not policy.get('enabled') or not cfg.get('agents',{}).get(lane+':delivery'):raise ValueError('项目尚未配置可执行授权；接入或发现角色不会自动获得开发权限。')
-  from bridge import validate_profile
+  if not view(root,lane)['allowed'] or not policy.get('enabled'):raise ValueError('项目尚未配置可执行授权；接入或发现角色不会自动获得开发权限。')
+  from project_adapter import validate_profile
   validate_profile(cfg['projects'][lane]['profile'])
   store.project_guard(lane)
  command={'type':'loop_control','mode':mode}
