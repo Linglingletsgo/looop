@@ -157,6 +157,21 @@ class PaperclipFreeBin(unittest.TestCase):
    self.assertFalse((BIN/name).exists(),name)
   self.assertFalse((BIN.parent/'ui/server.mjs').exists())
 
+class PaperclipFreeTree(unittest.TestCase):
+ """Outside bin/, shipped code, units, skills and top-level docs no longer mention the retired product."""
+ ROOTS=('ui','scripts','skills','deployment','templates','pm-skills','spec')
+ FILES=('README.md','AGENTS.md','setup.py')
+ def test_no_paperclip_outside_history_docs_and_tests(self):
+  root=BIN.parent;paths=[root/name for name in self.FILES if (root/name).exists()]
+  for folder in self.ROOTS:
+   if (root/folder).exists():paths+=[p for p in (root/folder).rglob('*') if p.is_file() and not p.is_symlink()]
+  self.assertTrue(paths)
+  for path in paths:
+   try:text=path.read_text()
+   except (UnicodeDecodeError,OSError):continue
+   with self.subTest(path=str(path.relative_to(root))):
+    self.assertNotIn('paperclip',text.lower())
+
 class Setup(unittest.TestCase):
  def test_setup_never_installs_or_references_the_retired_product(self):
   text=(BIN/'setup.py').read_text()
