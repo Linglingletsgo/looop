@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "looop",
+  "role_discovery": "explicit",
+  "roles": {
+    "product-manager": ["default-roles/product-manager.md"],
+    "builder": ["default-roles/builder.md"],
+    "reviewer": ["default-roles/reviewer.md"]
+  },
+  "rules": {
+    "common": ["AGENTS.md"],
+    "reference": ["docs/cutover.md", "docs/project-state-protocol.md", "docs/standalone-architecture.md"]
+  },
+  "workflow": [
+    {"stage": "build", "role": "builder", "provider": "dsh_profile"},
+    {"stage": "review", "role": "reviewer", "mode": "standard", "provider": "dsh_profile"}
+  ],
+  "checks": [
+    ["python3", "-m", "unittest", "discover", "-s", "tests"]
+  ],
+  "workflow_mapping": "looop is the scheduler itself. This adapter is standalone only: it is not registered as a scheduler lane and must not be scheduled by looop. Claude acts as product manager in owner conversations; Builder and Reviewer run on DeepSeek Harness through looop-agents/dsh-sandboxed in /home/agentdev/projects/looop-<name> worktrees, never in the live checkout. Roles are the repository's own default-roles files (the default-role installer refuses the looop checkout). bin/ is canonical; .agent/tools links to it. Changes to live systemd units follow docs/cutover.md with explicit operator approval; data/, logs/, caches, credentials and machine bindings are never committed. WOS automation disabled, DS1 human-only."
+}

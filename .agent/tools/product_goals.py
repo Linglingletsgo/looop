@@ -1,0 +1,1 @@
+../../bin/product_goals.py
