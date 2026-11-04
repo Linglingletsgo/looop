@@ -1,64 +1,67 @@
 # looop
 
-Personal agent scheduler. One maintained repository for scheduling, adapters, default roles and skills; it runs entirely locally (no external board, process or credential).
+**让 AI Agent 协作，把需求推进到经过检查与独立审核的交付。**<br>
+**Turn requirements into checked, independently reviewed deliveries with AI agents.**
 
-- `bin/`: controller, local job table (`jobs.py`), tracker (`tracker.py`), console server, state tools and the delivery worker.
-- `deployment/systemd/`: user-unit templates for the loop launcher, maintenance and the owner console.
-- `skills/project-adapter/`: project onboarding skill; assets link to canonical code.
-- `default-roles/`: concise fallback roles; project roles take precedence.
-- `runtime/`: legacy npm manifest, not used by looop.
-- `retention.json`: bounded diagnostic retention.
-- `tests/`: Linux verification.
+looop 是本地运行的开源 Agent 调度器，将产品规划、开发、审核和项目状态连接起来。你决定方向，looop 协调执行。
 
-Each project owns the authoritative `.agent/local/runtime/data/project-state/<lane>.current.json`; `current.json` is a compatibility alias and SQLite maintains transactional indexes. Scheduled jobs and independent conversations use this same state. Controller `locations.json` stores local routing only. `.agent/project.json`, `.agent/tools/` and a short AGENTS entry provide the portable project interface. Historical HANDOFF is reference, not current state.
+looop is a local, open-source agent scheduler connecting product planning, development, review and project state. You set the direction; looop coordinates the work.
 
-Independent project: `python3 .agent/tools/project-session.py context --repo .`. Use start/progress/finish to update current work; start must be accepted before assuming scheduler exclusivity. No periodic handoff or conversation transcript is required. Default context excludes completed history; request `context --history` explicitly. Submit commit-backed role evidence with `result --id WORK_ID --result-file FILE`; session finish is self-reported and never means reviewed or merged. See [project state and handoff](docs/project-state-protocol.md) for the result template, offline behavior and resource ownership. Existing project tools require a separately reviewed upgrade; scheduler updates do not overwrite WOS or other project exports.
+**Beta · Linux · MIT** — 欢迎试用、反馈和一起开发。接口与配置仍在演进。<br>
+Early adopters and contributors welcome. Interfaces and configuration are still evolving.
 
-Install from a clone on Linux: `python3 bin/setup.py` (Python3, Git, tmux, Node24+ for the provider CLIs). It creates the local `data/` root, writes `data/local-settings.json` with `{"tracker": "local"}` and links the `project-adapter` skill. Install the units under `deployment/systemd/` with the P1e procedure in [cutover](docs/cutover.md). Reconnect local credentials and project paths; these are intentionally excluded from Git. GitHub preserves the scheduler code, not secrets or live business state. To move active work, transfer each project's ignored state directory securely and relink it; do not run two schedulers against divergent copies.
+## 为什么使用 looop / Why looop
 
-Existing installation: `/home/agentdev/projects/looop`. The owner landing page is `/looop`, served by `bin/console-server.py` (loopback by default, owner password, optional `tailscale serve`). Opening the console never resumes planning. Owner actions use same-origin JSON, project revision checks and the same project-owned state as independent conversations.
+- **接入已有项目**：沿用仓库规则、角色和检查，不必重建工作流。<br>
+  **Bring your repositories**: keep their rules, roles and checks.
+- **从需求到交付**：规划任务，由 Builder 实现、独立 Reviewer 审核，并执行项目检查。<br>
+  **Go from requirement to delivery**: plan, build, independently review and run project checks.
+- **自由选择 Agent**：支持 Codex、Claude Code、OMP 和 DeepSeek Harness，按阶段配置。<br>
+  **Choose your agents**: configure Codex, Claude Code, OMP or DeepSeek Harness per stage.
+- **保持掌控**：在本地控制台查看证据、单次或持续运行、暂停新任务。独立对话共享项目状态。<br>
+  **Stay in control**: inspect evidence, run once or continuously, and pause new work. Project conversations share the same state.
 
-Retention: log/trace tails ≤2MiB each; 500 recent acknowledged project events plus up to5000 pending events; latest20 self-reported completions; terminal current-state summaries retained as needed. Completed diagnostic workspaces compact after14 days,20 runs or1GiB. Active tasks, unresolved decisions and unsynced events are protected. Current-state mutation never requires replaying full logs. Legacy pilot snapshots are not execution truth and will be separately inventoried.
+## 快速开始 / Quick start
 
-Run `python3 -m unittest discover -s tests` and `node tests/intervention-ui.mjs`. (`tests/console-http.mjs` belonged to the retired board-hosted UI and its runtime dependency is no longer installed.) `docs/history/` is migration reference, not required reading or the current operating contract.
+需要 Linux、Python 3、Git、tmux；部分 Agent CLI 需要 Node.js 24+。另行安装并登录所选 Agent CLI。<br>
+Requires Linux, Python 3, Git and tmux; some agent CLIs need Node.js 24+. Install and authenticate your chosen agent CLI separately.
 
-Console operations:
-- **Selection source** defaults to **Backlog only**. Confirmed requirements in current state have priority; otherwise PM selects an explicit pending `- [ ]` entry from the adapter’s `backlog_paths` (or declared backlog reference files). Historical prose and checked entries are context, not pending work. For older free-form backlogs, the adapting agent should put genuinely pending requirements into current state or a short checklist after checking code; do not convert historical work blindly. Empty backlog ends the round without a model call. **Backlog + research** also permits finding requirements within current product direction. Research still follows project source/data permissions and approved direction; the mode does not authorize outside scope, new providers or new services. Selection changes increment `planning_revision`, reject stale undispatched proposals and leave bound deliveries intact. The chosen backlog item is linked to the delivery so it cannot be selected repeatedly.
-- **Execution settings** default to unlimited daily autonomous proposals. Each project can set a positive daily count or clear it for unlimited; `loop_limits` in project-owned state is authoritative. Custom daily limits reset on UTC dates and exclude confirmed requirements. Settings do not change loop mode, scope or review gates.
-- **Once / continuous / pause** update `loop_control` in project-owned state. Once advances one product goal through as many coherent slices and verified deliveries as needed, then stops after explicit whole-goal completion. Blocked/no-work also stops; existing legacy tasks retain their single-delivery behavior. Pause drains started work and prevents new selection. The timer launches configured lanes in separate tmux sessions. Legacy `enabled` is only the fallback before an explicit state switch; CLI and UI then share the same state. No total-duration kill is imposed.
-- **Product input** stores confirmed requirements or decisions; it never resumes a paused loop or expands execution authority. Requirements enter PM priority selection; decisions constrain planning. Independent conversations read the same state.
-- **Attention** resolves existing change requests (keep the original scope or follow up separately), returns deferred requirements to PM, and shows bounded task evidence. Explicit retry uses existing worker/lock/baseline/publication checks, retains evidence and reruns gates. Unknown publication/PM effects are not blindly replayed; provider auth/credit issues still need verification.
-- **Onboarding** previews arbitrary project roles, mapped workflow, checks, lockfiles and CLI availability without executing project scripts. Explicit connection preserves existing rules and creates a context-only adapter when missing, standalone state tools, a short AGENTS entry and an ignored project-owned state directory. It adds one local observation project entry (no id/company fields) without execution policy, credentials, installs, commits or pushes. Linked worktrees remain preview-only. Complex/conflicting mappings and existing state/tool mismatches must be resolved in the project conversation using the adapter skill. A version fingerprint prevents using stale previews. 
+```sh
+git clone https://github.com/Linglingletsgo/looop.git
+cd looop
+python3 bin/setup.py
+python3 bin/console-auth.py set-password
+python3 bin/console-server.py
+```
 
-The local job table is the only tracker; there is no remote board to reconcile. Dependency preview is static: a detected CLI does not prove services/system libraries are operational. Activation uses the existing project contract and verified environment. A context-only adapter stays non-executable until its mapping is completed in the project conversation; WOS stays disabled and DS1 stays manual.
+打开 **http://127.0.0.1:3120/looop**，使用刚设置的密码登录（至少 12 位）。接入项目、完成工作流配置、选择执行器，再主动开启单次或持续运行。安装不会自动启动任务；模型服务需自行配置。
 
-Scheduling authority lives in project `loop_control`; product decisions retain direction, scope and approval constraints. To replace an obsolete decision, submit human-confirmed `supersede_decision` with `intent_id`, replacement `title`/`body`, expected revision and stable request id. The original remains linked audit history, while normal context and PM input include only effective decisions. Starting a loop never grants broader implementation scope.
+Open **http://127.0.0.1:3120/looop** and sign in with your password (at least 12 characters). Connect a project, complete its workflow mapping, choose an execution harness, then explicitly start a single or continuous run. Setup does not start tasks; model access is configured separately.
 
-Execution configuration no longer requires a second per-project file whitelist. For a registered lane with a verified profile and an executable `.agent/project.json`, run `python3 bin/delivery-control.py configure LANE` on Linux. It inherits project roles, workflow, checks and explicit restrictions. When no project workflow exists, `runtime/execution-defaults.json` supplies Builder (Command Code) → Reviewer (Codex), with optional local overrides in ignored `data/execution-defaults.json`. Command Code remains routed only to the configured DeepSeek Flash subscription; there is no paid fallback. No Acceptance step is added. Existing execution policies are preserved; `--policy FILE` remains an explicit override for special projects. Configuration does not start a loop or change merge policy.
+## 参与开发 / Contribute
 
-Without a project file whitelist, PM proposes task-specific paths and Builder is checked against that immutable task scope. Native AGENTS, project role/rule files and secrets remain protected. This reuses the project contract, not the terminal session’s unrestricted host environment: credentials and publication remain controller-owned, and jobs run in isolated snapshots. Python, Node and npm script checks are supported; npm uses the installed distribution and mounted project dependencies without host npmrc. Other package managers, network services and checks needing writable build directories require an adapted execution environment; they are not silently replaced or declared verified.
+欢迎通过 [Issues](https://github.com/Linglingletsgo/looop/issues) 分享使用体验、报告问题和讨论想法，也欢迎提交 PR。问题反馈请附复现步骤、版本和所用 Agent，隐去凭据与私有项目内容。
 
-Selection CLI, using the same project-owned state as the UI: `python3 bin/autonomy-control.py select LANE --selection-mode backlog_only` or `--selection-mode backlog_and_research`. This changes only task selection; use the normal once/resume action to start execution. In the console open **Execution settings → Selection source**, save, then choose **Once** or **Continuous**.
+Share feedback, report bugs or discuss ideas in [Issues](https://github.com/Linglingletsgo/looop/issues), or open a pull request. Include reproduction steps, the version and agent used; omit credentials and private project content.
 
-The console header’s **Execution settings** selects a real native CLI independently for planning, Builder, Reviewer, optional Acceptance and advice. Codex and OMP use the existing CLIProxyAPI or Command Code subscription; Command Code is fixed to `deepseek/deepseek-v4.1-flash`, including OMP's auxiliary model roles. Claude Code uses a subscription OAuth login (`ssh -t linux-dev 'export PATH="$HOME/.local/bin:$PATH"; claude auth login'`), with no API-key fallback. DeepSeek Harness runs `dsh --profile headless` with its own `dsh_profile` route and credential; looop passes no key and this pair cannot be combined with the other plans. An installed CLI and an authenticated subscription are displayed separately. Unsupported harness/plan pairs are rejected. Command Code currently rejects DeepSeek Flash on its Anthropic Messages endpoint, so it cannot supply the Claude Code harness.
+核心代码在 `bin/`，控制台在 `ui/`，测试在 `tests/`。遵循 [项目约定](AGENTS.md)，保持改动聚焦，并运行相关检查：<br>
+Core code lives in `bin/`, the console in `ui/`, and tests in `tests/`. Follow [project conventions](AGENTS.md), keep changes focused and run relevant checks:
 
-Jobs invoke `codex exec`, `claude -p`, `omp -p`, or `dsh --profile headless --json -` in disposable project snapshots with normal Linux tools/network and project rules. Harnesses own model/tool loops; looop owns task state, stage dispatch, source/SHA checks, publication and merge policy. These are trusted user processes with the account's normal permissions, not an OS security sandbox. Read-only roles are checked for source mutations; temporary Git metadata is copied rather than shared with the candidate, and dependency links are removed before source comparison. Existing source-free acceptance requirements still need their own project runtime; choosing a harness does not satisfy them.
+```sh
+python3 -m unittest discover -s tests
+node tests/intervention-ui.mjs
+```
 
-**Magpie / DeepSeek Flash 共享池** selects the existing `group/auto-deepseek-v4-1-flash` route. Magpie owns account selection, quota-aware routing and failover across its configured WorkBuddy/Command Code Flash members. Single-provider options remain available. A cooldown for the WorkBuddy-only route does not pause this separate pool route; looop does not add providers or paid fallbacks to the group.
+## 深入了解 / Documentation
 
-Execution settings are revision checked, stored in ignored `data/execution-settings.json`, and contain no secrets. Saving never starts a project. Each newly started planning/delivery captures its routes; running stages keep that snapshot. With no explicit settings save, existing project provider mappings remain in effect. Calls have no total timeout unless the project explicitly configures one; native session persistence is disabled and each invocation log is capped at 4 MiB, with normal retention applied to job artifacts. Quota/auth failures pause the selected route without switching provider; remaining subscription balance is reported as unknown unless the provider exposes it.
+- [架构与部署 / Architecture & deployment](docs/standalone-architecture.md)
+- [升级与服务配置 / Upgrades & service setup](docs/cutover.md)
+- [项目状态与交接 / Project state & handoff](docs/project-state-protocol.md)
+- [产品规划 / Product planning](docs/pm-workflow.md)
+- [PM 方法与来源 / PM methods & attribution](pm-skills/README.md)
 
+## 许可证 / License
 
-Unconfigured project cards expose **Prepare automatic development**. The read-only check lists contract, workflow, check-command, baseline, checkout and unsupported runtime gaps. Ready projects can enable configuration without starting tasks; uncertain Agent creation is journaled and never blindly retried. WOS currently requires its own workflow mapping and source-free black-box acceptance, which the current source-visible delivery runner does not implement; it therefore remains blocked rather than silently using the generic review pipeline. Its uncommitted/untracked work and DS1 remain untouched.
+原创代码、文档与默认 PM 方法包采用 [MIT License](LICENSE)，允许商用、修改和再分发，需保留许可声明。可选[非商业 PM 方法包](pm-skills/noncommercial/README.md)及其 Dean Peters 上游素材采用 **CC BY-NC-SA 4.0**，保留原有授权；该包默认禁用。
 
-## Evidence-led PM and product goals
-
-PM first selects a bounded research question and relevant methods, then researches with actual tools before proposing a new goal. Project PM methods have precedence; `research.skill_paths` in the neutral adapter can declare their canonical files. Reviewed personal-use defaults live in [pm-skills](pm-skills/README.md), with original sources, license texts and pinned hashes. Defaults fill explicit method gaps rather than replacing project roles. No mandatory market study is added to understood backlog work. Novel requirements need public evidence as well as current-code context; source retrieval verifies attribution, not market demand.
-
-The shared project state contains one `product_goal` (value, criteria, remaining work, progress, slice count) and the latest `research` brief. Each delivered slice keeps its requirement open; PM must verify every goal criterion before completion. Independent conversations see the same state through the exported tools. Self-reported manual progress stays labelled. Missing evidence stores a gap and dispatches no feature. Research and delivery use the configured real harness/plan; settings, project permissions and merge policy are unchanged. No default Acceptance stage or total runtime deadline is added.
-
-Open the project card to inspect the goal and **PM 调研**; task **证据** includes selected methods, versions and source quotations. The repository is MIT. The default pack is MIT (`research-core` plus the phuryn/Uxcel adaptations); the Dean Peters `investigation` and `competitive-research` adaptations are CC BY-NC-SA 4.0 and ship as an opt-in pack enabled by `{"pm_skills": {"noncommercial": true}}` in `data/local-settings.json`, which also restores `investigation` as the base method. Preserve their licenses. See [research selection](docs/pm-skills-research.md).
-
-Claude Code 接入 Command Code DeepSeek Flash：参见 [配置与使用](docs/commandcode-claude.md)。
-
-Consumer product planning prioritizes complete user journeys and observable before/after improvements. New experience goals retain a compact journey contract and require current-version running-product evidence at completion, labelled as agent walkthrough or actual user testing. Existing goals and non-interactive projects remain compatible; UX/UI is optional. See [consumer experience goals](docs/consumer-experience-goals.md).
+Original code, documentation and the default PM method pack use the [MIT License](LICENSE), permitting commercial use, modification and redistribution with the license notice retained. The optional [noncommercial PM pack](pm-skills/noncommercial/README.md) and its Dean Peters upstream materials retain **CC BY-NC-SA 4.0** terms. That pack is disabled by default.
