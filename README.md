@@ -7,15 +7,17 @@ looop 是本地运行的开源 Agent 调度器，将产品规划、开发、审�
 
 looop is a local, open-source agent scheduler connecting product planning, development, review and project state. You set the direction; looop coordinates the work.
 
-**Beta · Linux · MIT** — 欢迎试用、反馈和一起开发。接口与配置仍在演进。<br>
-Early adopters and contributors welcome. Interfaces and configuration are still evolving.
+**Beta · Linux · MIT** — 欢迎试用、反馈和一起开发。目前尚未开箱即用，项目适配与运行环境仍需手动配置。<br>
+Early adopters and contributors welcome. Not yet plug-and-play: project adaptation and runtime setup still require manual configuration.
 
 ## 为什么使用 looop / Why looop
 
-- **接入已有项目**：沿用仓库规则、角色和检查，不必重建工作流。<br>
-  **Bring your repositories**: keep their rules, roles and checks.
-- **从需求到交付**：规划任务，由 Builder 实现、独立 Reviewer 审核，并执行项目检查。<br>
-  **Go from requirement to delivery**: plan, build, independently review and run project checks.
+- **少写重复的 handoff**：换会话、换 Agent，不必每次重新整理进展。当前状态属于项目，各会话从同一入口接续工作。<br>
+  **Spend less time on handoffs**: keep current state with the project, so new sessions and agents can pick up the work without rebuilding the context each time.
+- **先适配，再按需自动化**：用 `project-adapter` skill 沿用项目规则、角色和检查。适配层可独立使用，无需接入调度器。<br>
+  **Adapt first, automate when ready**: the `project-adapter` skill preserves project rules, roles and checks. Use the adapter on its own, without the scheduler.
+- **围绕目标持续推进**：选择只开发 backlog，或允许 PM 在既定方向内调研、提出任务，再经开发、检查与独立审核推进 PR。<br>
+  **Keep goals moving**: work through the backlog, or let PM research within the approved direction and propose tasks, then move toward PRs through development, checks and independent review.
 - **自由选择 Agent**：支持 Codex、Claude Code、OMP 和 DeepSeek Harness，按阶段配置。<br>
   **Choose your agents**: configure Codex, Claude Code, OMP or DeepSeek Harness per stage.
 - **保持掌控**：在本地控制台查看证据、单次或持续运行、暂停新任务。独立对话共享项目状态。<br>
@@ -23,20 +25,36 @@ Early adopters and contributors welcome. Interfaces and configuration are still 
 
 ## 快速开始 / Quick start
 
-需要 Linux、Python 3、Git、tmux；部分 Agent CLI 需要 Node.js 24+。另行安装并登录所选 Agent CLI。<br>
-Requires Linux, Python 3, Git and tmux; some agent CLIs need Node.js 24+. Install and authenticate your chosen agent CLI separately.
+**从 [`project-adapter` skill](skills/project-adapter/SKILL.md) 开始。** 先克隆并运行 setup，将 skill 链接到 `~/.codex/skills/`：<br>
+**Start with the [`project-adapter` skill](skills/project-adapter/SKILL.md).** Clone and run setup to link the skill into `~/.codex/skills/`:
 
 ```sh
 git clone https://github.com/Linglingletsgo/looop.git
 cd looop
 python3 bin/setup.py
+```
+
+在你要适配的项目中开启 Agent 会话，调用：<br>
+Open an agent session in the project you want to adapt and ask:
+
+> 使用 $project-adapter 适配当前项目，保留已有规则和工作流，先独立使用，不开启自动调度。
+>
+> Use $project-adapter to adapt this project, preserving its rules and workflow. Start in standalone mode without enabling scheduling.
+
+独立状态工具只需 Python 3；适配后即可跨会话读取状态、记录进展。想自动推进时，再配置调度器。<br>
+Standalone state tools need only Python 3. After adaptation, sessions can read shared state and record progress. Configure scheduling when you want automatic execution.
+
+调度器需要 Linux、Python 3、Git、tmux；部分 Agent CLI 需要 Node.js 24+。另行安装并登录所选 Agent CLI，然后在 looop 目录启动控制台：<br>
+The scheduler requires Linux, Python 3, Git and tmux; some agent CLIs need Node.js 24+. Install and authenticate your chosen agent CLI, then start the console from the looop directory:
+
+```sh
 python3 bin/console-auth.py set-password
 python3 bin/console-server.py
 ```
 
-打开 **http://127.0.0.1:3120/looop**，使用刚设置的密码登录（至少 12 位）。接入项目、完成工作流配置、选择执行器，再主动开启单次或持续运行。安装不会自动启动任务；模型服务需自行配置。
+打开 [本地控制台](http://127.0.0.1:3120/looop)，使用刚设置的密码登录（至少 12 位）。接入项目、完成工作流配置、选择执行器，再主动开启单次或持续运行。安装不会自动启动任务；模型服务需自行配置。
 
-Open **http://127.0.0.1:3120/looop** and sign in with your password (at least 12 characters). Connect a project, complete its workflow mapping, choose an execution harness, then explicitly start a single or continuous run. Setup does not start tasks; model access is configured separately.
+Open the [local console](http://127.0.0.1:3120/looop) and sign in with your password (at least 12 characters). Connect a project, complete its workflow mapping, choose an execution harness, then explicitly start a single or continuous run. Setup does not start tasks; model access is configured separately.
 
 ## 参与开发 / Contribute
 
